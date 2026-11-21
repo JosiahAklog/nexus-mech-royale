@@ -1,12 +1,4 @@
-# NEXUS V22 — duel-aware adaptive policy
-
-## V22 changes
-- Estimate sustained damage using live weapon stats, ammo/reload, range, energy, and cube scaling. Enemy estimates use public default weapon stats and observed equipment; they are heuristics, not match predictions.
-- Favor winnable duels and adjust combat spacing against lightning-equipped opponents. Keep active attackers ahead of farming targets.
-- Prioritize early secondary weapons and clusters of cubes; increase safe early travel boosts.
-- Prefer armor or plating when under sustained nearby pressure, and energy-efficient lightning upgrades when energy is low.
-- 62 unit tests passed; native and fallback protocol checks passed. On the 300 recorded observations, V22 and V21 had identical actions; targeted tests exercise new decisions. No actual V22 match score or Docker execution verified locally.
-
+# NEXUS V21 — cover-aware adaptive candidate
 
 Derived from the existing V20 package. V9 (4.33) remains the last confirmed competition score. V21 is a hypothesis to test, not a guaranteed improvement.
 
@@ -53,3 +45,5 @@ Default policy remains adaptive. If the highest-ranked target has no viable pred
 
 ## V19 changes
 The default remains adaptive. New changes: aim at a reachable portion of the target when its midpoint falls outside pitch limits; orbit NPCs at about 29 m rather than holding still at close range; favor a ready gun over starting a laser charge in a close, multi-opponent fight when mobility matters; allow proactive gun reloads in either slot. Added four regression tests. The bot announces NEXUS-V19-adaptive at startup. The native helper and Dockerfile remain unchanged. No official match score for V19; no local Docker execution. Use a distinct submitted commit SHA for each variant and compare the individual scores. V9's 4.33 is the last confirmed best score supplied by the user.
+
+V23: survival-biased adaptive variant based on V21. Earlier retreat, stronger cover and projectile avoidance, greater distance from lightning, earlier zone positioning. Competitive score unmeasured.
