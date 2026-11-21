@@ -1,18 +1,18 @@
-# NEXUS V35 — Persistent Threat Awareness
+# NEXUS V36 — Resource-first rollback candidate
 
-Built from the exact V34 complete ZIP. Confirmed competitive best reported by the user: V28.1, 4.96. The V34 prediction of 5.72 is hypothetical, not measured. Target: 6.00+.
+V36 starts from the archived V28.1 complete package, not the lower-scoring V35. V28.1 was previously reported at 4.96; V35 was reported at 4.69. The latest user message says 4.86 is the best entry; the official receipt should determine the true final best. This candidate has no competitive score yet.
 
-## Changes from V34
-- Track recent attackers independently for twelve seconds, so zone damage or another attacker does not immediately erase a known ranged threat.
-- Continue avoiding a recently damaging, exposed long-range shooter during repairs, and react to visible aimed charging lasers even when no recent attack is recorded. Allow repairs once terrain blocks the threat.
-- Prefer moving away from an exposed attacker rather than a nearby opponent behind cover.
-- Face the ranged threat when retreating without firing or releasing a charged laser, reducing potential rear-armor exposure.
-- Account for part of the actual healing duration when choosing future-safe escape cover.
-- Clear stale altitude targets when final-zone centering overrides the earlier objective.
+## Strategy
+- Healthy under-equipped mechs prioritize accessible second weapons, with a larger reward for ground-level lasers and no extra priority for contested or elevated pickups.
+- Prefer productive nearby crate and drone farming over full-health, distant, unengaged opponents; active attackers keep their original priority.
+- Use surplus energy to travel faster during early patrols and resource collection, preserving an escape reserve and the baseline projectile-risk gate.
+- Keep the baseline combat, recovery thresholds and defensive movement policy rather than accumulating V29–V35 heuristics.
+- Correct stale routes on objective changes and avoid clamping viable loot and drop positions to an unnecessarily large zone margin.
+- Keep charged laser aim when available (except for higher-priority lethal gun shots) and charge enough to destroy a crate in one shot when possible.
+- Do not suppress a meaningful projectile dodge by braking near loot; preserve final-zone braking.
 
-All earlier resource, energy, targeting, navigation and native acceleration routines are retained except for these specific changes. No interactive match simulator was available. The fixed replay only validates protocol and illustrates decisions; it cannot determine placement improvements.
+## Verification and limits
+Run `python -m unittest discover -q` in this clean extracted package, and `python check/check.py -- python -u bot.py`. See CHECK_RESULTS.txt for measured results. The checker is a fixed recorded stream, not an interactive simulator. No Docker run or competitive score was available in this environment. The candidate changes 38 of 300 recorded actions, all boost flags; the other changes were verified only in targeted scenarios. No score is guaranteed.
 
-## Upload
-If V34 is already uploaded, extract the four-file V35 update and upload to the repository root. Otherwise use the complete ZIP, preserving arena/v2 and check. Keep the highest confirmed entry selected until a better official result is available.
-
-See CHECK_RESULTS.txt for local verification.
+## Upload over V35
+Upload the six files from the V36 rollback update ZIP. It includes both `fastmap.c` and `fastmap.so` from V28.1 because V35 changed them. Leave `arena/` and `check/` unchanged. Docker copies only runtime assets. Old test_v29.py through test_v35.py are for later strategies that are deliberately removed; delete them if you want to run the clean V36 test suite in the GitHub checkout, or use the complete ZIP locally. Keep the highest-scoring official submission selected until this candidate is scored higher.

@@ -28,23 +28,18 @@ int fast_route(int w,int count,const int32_t *adj,const double *costs,int start,
 void projectile_risk(const double *cand,int nc,const double *shots,int ns,double px,double py,double pz,double speed,double vx0,double vy0,double accel,double height,double radius,double gravity,double splash,double *out){
  for(int i=0;i<nc;i++){
   double vx=cand[2*i]*speed,vy=cand[2*i+1]*speed,dx=vx-vx0,dy=vy-vy0;
-  double dv=sqrt(dx*dx+dy*dy),turn=accel>0?dv/accel:1e6,risk=0;
+  double dv=sqrt(dx*dx+dy*dy),turn=accel>0?fmin(.8,dv/accel):.8,risk=0;
   for(int j=0;j<ns;j++){
    const double *s=shots+7*j; double rx=s[0]-px,ry=s[1]-py,rvx=s[3]-vx,rvy=s[4]-vy,den=rvx*rvx+rvy*rvy;
-   double ux=s[3]-vx0,uy=s[4]-vy0,uden=ux*ux+uy*uy;
-   double tt=den>1?fmax(0,fmin(.8,-(rx*rvx+ry*rvy)/den)):0;
-   double old=uden>1?fmax(0,fmin(.8,-(rx*ux+ry*uy)/uden)):0;
-   double times[]={tt,old,(tt+old)*.5,fmax(.015,tt-.035),fmin(.8,tt+.035),fmin(.8,turn),.10,.25,.50,.80};
-   double r=radius+(s[6]>.5?splash:1.4)+3,worst=0;
-   for(int k=0;k<10;k++){
-    double t=times[k];if(t<.015)continue;
-    double lag=turn>1e-8?(t<turn?t*(1-.5*t/turn):.5*turn):0;
-    double vertical=s[2]+s[5]*t-(pz+height*.5)-(s[6]>.5?.5*gravity*t*t:0);
-    if(fabs(vertical)>height*.65+3)continue;
-    double x=rx+rvx*t+dx*lag,y=ry+rvy*t+dy*lag,miss2=x*x+y*y;
-    if(miss2<r*r)worst=fmax(worst,(r-sqrt(miss2))*4);
-   }
-   risk+=worst;
+   double t=den>1?fmax(0,fmin(.8,-(rx*rvx+ry*rvy)/den)):0;
+   if(t<.015)continue;
+   /* Account for acceleration: the mech cannot change velocity instantly. */
+   double lag=turn>1e-8?(t<turn?t*(1-.5*t/turn):.5*turn):0;
+   double vertical=s[2]+s[5]*t-(pz+height*.5)-(s[6]>.5?.5*gravity*t*t:0);
+   if(fabs(vertical)>height*.65+3)continue;
+   double x=rx+rvx*t+dx*lag,y=ry+rvy*t+dy*lag;
+   double r=radius+(s[6]>.5?splash:1.4)+3,miss2=x*x+y*y;
+   if(miss2<r*r)risk+=(r-sqrt(miss2))*4;
   }
   out[i]=risk;
  }

@@ -1,25 +1,29 @@
-NEXUS V35 — local verification, not competitive scoring
+NEXUS V36 — actual local validation
 
 ----------------------------------------------------------------------
-Ran 118 tests in 7.476s
+Ran 78 tests in 4.793s
 
 OK
-360 synthetic cases: max 1.20 ms, p99 1.04 ms
+360 synthetic cases: max 1.55 ms, p99 1.01 ms
 
+Native enabled:
 bot: python -u bot.py
-ready in 690 ms: name 'NEXUS-V35-adaptive'
+ready in 646 ms: name 'NEXUS-V36-adaptive'
 observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.3  p90 0.5  p99 0.7  max 0.8  (this machine, not the 1-CPU match container)
+answer time ms: p50 0.3  p90 0.5  p99 0.8  max 1.1  (this machine, not the 1-CPU match container)
 answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
 PASS
 
-Python-only fallback protocol:
+Native disabled:
 bot: python -u bot.py
-ready in 668 ms: name 'NEXUS-V35-adaptive'
+ready in 781 ms: name 'NEXUS-V36-adaptive'
 observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.4  p90 0.8  p99 1.0  max 1.2  (this machine, not the 1-CPU match container)
+answer time ms: p50 0.3  p90 0.5  p99 0.8  max 3.1  (this machine, not the 1-CPU match container)
 answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
 PASS
 
-V34 fixed-replay comparison: 33/300 changed observations, all aim fields; first change at t=7.9 s. No movement or fire changes on this fixed replay. Python compilation passed. Docker engine and interactive match simulator unavailable.
-Unchanged package members: 28/31; 4 changed or new files.
+Compared to archived V28.1:
+Differing actions: {'any': 38, 'boost': 38}
+Modes: {('patrol', 'patrol'): 38, ('loot', 'loot'): 68, ('escape', 'escape'): 77, ('repair', 'repair'): 117}
+
+All shipped Python files compiled. Native binary and source match V28.1. Docker unavailable. No interactive simulation or competitive placement measured.
