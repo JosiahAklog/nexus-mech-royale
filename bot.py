@@ -168,7 +168,7 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V37-'+self.variant if self.variant!='baseline' else self.name
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V41-'+self.variant if self.variant!='baseline' else self.name
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
@@ -246,7 +246,7 @@ class Bot:
     def intercept(self,p,me,t,w):
         k=w['kind']; st=w['stats']; ts=me['stats']; pos=t['pos']; v=t.get('vel',(0,0,0)); ht=self.target_height(t); muzzle=ts['height']+.5 if k=='mortar' else ts['muzzle_height']; origin=(p[0],p[1],p[2]+muzzle)
         delay=.5/max(1.,self.cfg['match']['tick_hz']); speed=st.get('speed',1e8); gravity=st.get('gravity',0.) if k=='mortar' else 0.
-        if self.variant=='combat' and k in ('gun','mortar') and w.get('cooldown',0.)<=.12:delay=max(delay,w.get('cooldown',0.))
+        if self.variant in ('combat','combat-economy') and k in ('gun','mortar') and w.get('cooldown',0.)<=.12:delay=max(delay,w.get('cooldown',0.))
         flight=max(0.,(distance(p,pos)-ts['radius']-.5)/speed)
         for _ in range(6 if gravity else 3):
             fut=flight+delay; tx,ty,tz=self.predict_target(t,fut);tz+=ht
@@ -499,7 +499,7 @@ class Bot:
             if self.profile=='adaptive' and kind=='mech' and line:
                 score+=12*self.duel_value(me,t,d)
                 score+=self.opportunity_bonus(p,me,t,enemies,obs)
-                if self.variant=='combat':score+=self.combat_opportunity(me,t,d)
+                if self.variant in ('combat','combat-economy'):score+=self.combat_opportunity(me,t,d)
             cand.append((score,t,line))
         self.target_candidates=sorted(cand,key=lambda it:it[0],reverse=True)
         if not self.target_candidates:return None,False
@@ -589,7 +589,7 @@ class Bot:
                 if self.profile=='adaptive' and me['cubes']<cap and nd>75 and d<100:
                     route_bonus=min(9.,cluster*3.) if self.map.ray((p[0],p[1],p[2]+1.2),(x['pos'][0],x['pos'][1],x['pos'][2]+1.2)) else 0.
                 econ_bonus=0.
-                if self.variant=='economy' and nd>55 and not recovering and me['cubes']<cap:
+                if self.variant in ('economy','combat-economy') and nd>55 and not recovering and me['cubes']<cap:
                     # Prefer a nearby multi-cube group, not a distant speculative route.
                     econ_bonus=min(24.,cluster*8.)+ (8. if d<14 else 0.)
                 loot.append((self.loot_cost(p,x,close,me)-route_bonus-69-policy['loot']+extra-min(30,cluster*10)-(12 if self.profile=='adaptive' and me['cubes']<4 and nd>90 and d<95 and hp>.75 else 0)-econ_bonus,x))
@@ -685,7 +685,7 @@ class Bot:
             finishing=(d.get('holder')==me['id'] and d.get('lands_in',0)<=0 and dd<d['radius']*.85 and d.get('progress',0)>=max(0,d.get('capture_s',4)-.9) and hp>.25 and not any(distance(e['pos'],d['pos'])<d['radius']+3 for e in close))
             if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240 and (finishing or self.objective_viable(p,d['pos'],me,z,t,d.get('capture_s',4),d.get('lands_in',0))):
                 drops.append((dd-(1-hp)*120-(180 if finishing else 0)-(35 if d.get('holder')==me['id'] else 0),d))
-        if self.variant=='economy' and not urgency and not recovering:
+        if self.variant in ('economy','combat-economy') and not urgency and not recovering:
             viable=[(self.drop_value(p,me,d,enemies,z,t),d) for d in obs['drops']]
             viable=[(v,d) for v,d in viable if v is not None and v>8.]
             if viable:
@@ -693,7 +693,7 @@ class Bot:
                 # Treat an attractive drop as a high-value objective even before
                 # landing, but never extend the baseline's capture ring.
                 drops=[(-1000.,d)]+drops
-        if drops and (hp<.98 or me['cubes']<15 or self.variant=='economy' and energy<55) and not urgency:
+        if drops and (hp<.98 or me['cubes']<15 or self.variant in ('economy','combat-economy') and energy<55) and not urgency:
             d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';altitude=goal[2];capture_radius=d['radius'];hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<4
         if goal is None and urgency:
             if hp<.78 and target and target.get('kind')!='mech':result['fire']=[False,False]
@@ -756,7 +756,7 @@ class Bot:
                 if self.profile=='adaptive' and obs.get('alive',16)<=5 and danger>=2 and hp<.85:ideal+=8
                 if 'lightning' in kinds and 'laser' in target.get('weapons',[]) and danger<=1 and hp>.62:ideal=32
                 if 'laser' in kinds and 'mortar' in target.get('weapons',[]):ideal=85
-                if self.variant=='combat' and danger<=1 and hp>.72 and line:
+                if self.variant in ('combat','combat-economy') and danger<=1 and hp>.72 and line:
                     if target.get('hp',1400)<me['hp']*.65 or self.duel_value(me,target,d)>.20:
                         if 'laser' not in kinds and 'mortar' not in kinds:ideal=max(23.,ideal-10.)
                         elif 'laser' in kinds:ideal=max(55.,ideal-8.)
@@ -959,6 +959,6 @@ class Bot:
         return result
 
 class Candidate(Bot):
-    variant='combat'
+    variant='combat-economy'
 
 if __name__=='__main__':mf.run(Candidate)
