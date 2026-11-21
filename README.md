@@ -1,4 +1,12 @@
-# NEXUS V21 — cover-aware adaptive candidate
+# NEXUS V22 — duel-aware adaptive policy
+
+## V22 changes
+- Estimate sustained damage using live weapon stats, ammo/reload, range, energy, and cube scaling. Enemy estimates use public default weapon stats and observed equipment; they are heuristics, not match predictions.
+- Favor winnable duels and adjust combat spacing against lightning-equipped opponents. Keep active attackers ahead of farming targets.
+- Prioritize early secondary weapons and clusters of cubes; increase safe early travel boosts.
+- Prefer armor or plating when under sustained nearby pressure, and energy-efficient lightning upgrades when energy is low.
+- 62 unit tests passed; native and fallback protocol checks passed. On the 300 recorded observations, V22 and V21 had identical actions; targeted tests exercise new decisions. No actual V22 match score or Docker execution verified locally.
+
 
 Derived from the existing V20 package. V9 (4.33) remains the last confirmed competition score. V21 is a hypothesis to test, not a guaranteed improvement.
 

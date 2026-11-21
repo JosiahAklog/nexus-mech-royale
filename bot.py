@@ -168,7 +168,7 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V21-'+self.profile
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V22-'+self.profile
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
@@ -191,6 +191,44 @@ class Bot:
                 if ed<25 and ed+7<d and abs(q[2]-e['pos'][2])<8:
                     cost+=max(0., min(35.,(d-ed)*.65))
         return cost
+    def sustained_damage(self, weapons, distance_m, energy=100., defaults=False):
+        """Bounded estimate of usable DPS, not a simulated battle outcome."""
+        total=0.
+        for w in weapons:
+            if not w:continue
+            k=w if defaults else w['kind']; st=self.cfg['weapons'][k] if defaults else w['stats']
+            reach=st.get('range',st.get('speed',72.)**2/max(1.,st.get('gravity',22.)))
+            if distance_m>reach*.97:continue
+            if k=='gun':
+                mag=st['mag']; cycle=mag*st['cooldown']+st['reload']; dps=st['damage']*mag/max(.1,cycle)
+                accuracy=clip(1.04-distance_m*.003,.38,.97)
+                if not defaults and w.get('reload',0)>.6:accuracy*=.72
+            elif k=='lightning':
+                dps=st['damage']/st['cooldown'];accuracy=.90 if defaults or energy>20 else .45
+            elif k=='laser':
+                dps=st['damage']/max(.1,st['charge']+st['cooldown']);accuracy=.89
+            else:
+                dps=(st['damage']+st.get('splash',0.)*.5)/max(.1,st['cooldown']);accuracy=.39 if distance_m>65 else .52
+                if distance_m<17:accuracy=0.
+            total+=dps*accuracy
+        return total
+    def duel_advantage(self,me,enemy,d):
+        # Approximate time-to-elimination ratio with conservative accuracy/armor.
+        cap=self.cfg['cubes']['stat_cap']; mul=self.cfg['cubes']['damage_per_cube']
+        own=self.sustained_damage(me['weapons'],d,me['energy'])*(1+mul*min(me['cubes'],cap))*.90
+        foe=self.sustained_damage(enemy.get('weapons',['gun']),d,defaults=True)*(1+mul*min(enemy.get('cubes',0),cap))
+        foe=max(45.,foe)*(1-me['stats'].get('armor',0.))
+        return (own*max(1.,me['hp']))/(max(1.,enemy.get('hp',1400))*max(1.,foe))
+    def combat_distance(self,ideal,me,target,d,danger):
+        # Stay just inside our own reach when it is advantageous, and outside
+        # the opposing arc when our weapons have a range advantage.
+        kinds=[w['kind'] for w in me['weapons'] if w]
+        arcs=[w for w in me['weapons'] if w and w['kind']=='lightning']
+        enemy_arc='lightning' in target.get('weapons',[])
+        if enemy_arc and not arcs:ideal=max(ideal,self.cfg['weapons']['lightning']['range']+16.)
+        if arcs and danger<=1 and me['energy']>=35 and self.duel_advantage(me,target,d)>1.25:
+            ideal=min(ideal,arcs[0]['stats']['range']*.72)
+        return ideal
     def retreat_pressure(self,exposed,p,me,t):
         # Low health does not imply a safe repair window. A close, armed pursuer
         # can reset the regeneration clock; keep fighting until cover is reached.
@@ -318,8 +356,12 @@ class Bot:
             if self.profile=='adaptive' and kind=='mech' and line:
                 recent=t['id']==self.last_attacker and obs['t']-self.last_damage<3.0
                 aiming=bool(t.get('weapons')) and abs(delta(bearing(t['pos'],p),t.get('aim',[0.,0.])[0]))<.35
-                if recent:score+=125
+                if recent:score+=140
                 elif d<90 and aiming:score+=38
+                if d<100:
+                    adv=self.duel_advantage(me,t,d)
+                    score+=clip((adv-1.)*17.,-12.,28.)
+                    if hp<220 and d<55:score+=18
             if kind=='mech' and hp>me['hp']*.9 and d>35 and me['cubes']<6:score-=35
             if kind=='mech' and line and t.get('charging'):score+=10 if d<45 and any(w and w['kind']=='lightning' for w in me['weapons']) else 0
             if kind!='mech' and loot:score-=15
@@ -359,6 +401,7 @@ class Bot:
         policy=self.policy; retreat=policy['retreat']; recovery_goal=policy['heal']
         if self.profile=='adaptive':
             retreat=clip(retreat+(.10 if danger>=2 else 0.)-(.09 if near and near.get('hp',1400)<me['hp']*.45 and danger==1 else 0.),.46,.76)
+            if near and danger==1 and nd<65 and self.duel_advantage(me,near,nd)>2.0 and me['cubes']>=3:retreat=max(.43,retreat-.07)
         if hp<retreat and (danger>=1 or t-self.last_damage<6) or hp<min(.50,retreat):
             if not self.recovering:self.recovery_since=t
             self.recovering=True
@@ -386,6 +429,9 @@ class Bot:
             elif self.profile=='survivor':ranks.update(nanites=120,armor=110,plating=103,servos=99,reactor=92,jets=91)
             if 'lightning' in kinds and 'laser' not in kinds:ranks['lightning_range']=91;ranks['lightning_efficiency']=90
             if 'laser' in kinds:ranks['laser_charge']=88
+            if self.profile=='adaptive' and nd<65 and t-self.last_damage<2.5 and hp<.74:
+                ranks.update(plating=112,armor=108)
+            if self.profile=='adaptive' and 'lightning' in kinds and energy<40 and nd<65:ranks['lightning_efficiency']=102
             result['pick']=max(range(len(obs['offer']['choices'])),key=lambda i:ranks.get(obs['offer']['choices'][i]['id'],0))
         # Prioritize an appropriate second weapon; keep the gun for consistent DPS.
         pref={'gun':0,'lightning':3,'mortar':2,'laser':4}
@@ -410,14 +456,14 @@ class Bot:
                 result['take']=x['id'];
                 if old is not None:result['drop']=1
                 break
-            if want and d<155 and dz<36 and self.safe(x['pos'],z):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
+            if want and d<155 and dz<36 and self.safe(x['pos'],z):loot.append((self.loot_cost(p,x,close,me)-(54+policy['loot'] if old is None else 10),x))
         for x in sorted(remembered_cubes,key=lambda c:distance(p,c['pos']))[:40]:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
             if d<170 and dz<36 and self.safe(x['pos'],z):
                 cap=self.cfg['cubes']['stat_cap']; thresholds=self.cfg['cubes']['upgrade_thresholds']; next_upgrade=min((n for n in thresholds if n>me['cubes']),default=100000)
                 extra=0 if me['cubes']<cap else 12 if next_upgrade-me['cubes']<=2 else 35
                 cluster=sum(1 for c in remembered_cubes[:160] if c['id']!=x['id'] and distance(c['pos'],x['pos'])<9 and abs(c['pos'][2]-x['pos'][2])<4)
-                loot.append((self.loot_cost(p,x,close,me)-69-policy['loot']+extra-min(30,cluster*10),x))
+                loot.append((self.loot_cost(p,x,close,me)-69-policy['loot']+extra-min(36,cluster*12)-(8 if me['cubes']<3 else 0),x))
         loot.sort(key=lambda q:q[0]); lootgoal=loot[0][1] if loot else None
         target, line=self.choose_target(p,me,obs,enemies,npcs,lootgoal)
         if recovering and pressure and (target is None or target.get('kind')!='mech'):
@@ -569,6 +615,7 @@ class Bot:
                 if hp<.72:ideal+=10
                 # Close isolated weak targets; strafe rather than run straight at them.
                 if target.get('hp',1400)<300 and danger<=1 and hp>.70:ideal=min(ideal,36)
+                if self.profile=='adaptive':ideal=self.combat_distance(ideal,me,target,d,danger)
                 ex,ey=norm(target['pos'][0]-p[0],target['pos'][1]-p[1]); sign=1 if (int(t/2.7)+self.slot)%2 else -1; radial=clip((d-ideal)/16,-1,1) if line else 1
                 sx,sy=norm(ex*radial-ey*sign*.7*policy['strafe'],ey*radial+ex*sign*.7*policy['strafe']);goal=(p[0]+sx*35,p[1]+sy*35);mode='fight'
             else:
@@ -626,9 +673,9 @@ class Bot:
             mode in ('escape','zone') and gd>12 and (energy>32 or self.boosting and energy>12)
             or mode=='loot' and gd>20 and (energy>(55 if nd>75 and me['cubes']<10 else 70) or self.boosting and energy>32)
             or mode=='drop' and gd>18 and (energy>45 or self.boosting and energy>25)
-            or mode=='farm' and nd>90 and gd>35 and energy>85 and me['cubes']<6
+            or mode=='farm' and nd>90 and gd>24 and energy>70 and me['cubes']<6
             or mode=='fight' and danger and ((nd<27 and energy>52 and 'lightning' not in kinds) or (self.profile=='aggressive' and nd>35 and nd<85 and energy>62 and 'lightning' in kinds and hp>.65))
-            or mode=='patrol' and energy>90 and gd>70)
+            or mode=='patrol' and energy>(72 if me['cubes']<3 and nd>100 else 90) and gd>55)
         charge_mult=stats.get('charge_move_mult',.5) if any(w and w['kind']=='laser' and result['fire'][i] for i,w in enumerate(weapons)) else 1.
         risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['walk_speed']*charge_mult)
         fast_risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['boost_speed']*charge_mult) if ground_boost and projectiles else risks
