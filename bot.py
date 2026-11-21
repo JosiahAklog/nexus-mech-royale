@@ -558,6 +558,17 @@ class Bot:
             elif self.profile=='survivor':ranks.update(nanites=120,armor=110,plating=103,servos=99,reactor=92,jets=91)
             if 'lightning' in kinds and 'laser' not in kinds:ranks['lightning_range']=91;ranks['lightning_efficiency']=90
             if 'laser' in kinds:ranks['laser_charge']=88
+            choices = {choice['id'] for choice in obs['offer']['choices']}
+            if self.profile == 'adaptive' and kinds == ['gun', None] and {'gun_damage', 'gun_mag'} <= choices:
+                # Prefer the damage upgrade when it saves a shot on a fresh crate.
+                gun = weapons[0]['stats']
+                cubes = self.cfg['cubes']
+                damage = gun['damage'] * (1 + cubes['damage_per_cube'] * min(me['cubes'], cubes['stat_cap']))
+                upgrade = next((u for u in self.cfg['upgrades'] if u['id'] == 'gun_damage'), {})
+                multiplier = next((e['mul'] for e in upgrade.get('effects', []) if e['path'] == 'weapons.gun.damage' and 'mul' in e), 1.)
+                crate_hp = self.cfg['crates']['hp']
+                if math.ceil(crate_hp / (damage * multiplier)) < math.ceil(crate_hp / damage):
+                    ranks['gun_damage'] = ranks['gun_mag'] + 1
             result['pick']=max(range(len(obs['offer']['choices'])),key=lambda i:ranks.get(obs['offer']['choices'][i]['id'],0))
         # Prioritize an appropriate second weapon; keep the gun for consistent DPS.
         pref={'gun':0,'lightning':3,'mortar':2,'laser':4}
