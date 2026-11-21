@@ -4,6 +4,8 @@ import mechfight as mf
 from math import hypot, atan2, sin, cos, sqrt, pi
 
 PROFILE='adaptive'
+ZONE_ROTATION_MARGIN = 18.
+LOOT_ROTATION_GRACE = 1.5
 # Independent policies for practice A/B testing. No seed or opponent information
 # beyond the current legal observations is used.
 POLICIES={
@@ -576,16 +578,19 @@ class Bot:
         loot=[]
         remembered_pickups,remembered_cubes=self.remembered_loot(obs)
         visible_pickups={x['id'] for x in obs['pickups']}
+        # Allow short momentum carry-through when deciding whether loot is reachable.
+        pickup_margin = max(8., ZONE_ROTATION_MARGIN - LOOT_ROTATION_GRACE - self.cfg['loot']['pickup_radius'])
+        cube_margin = max(8., ZONE_ROTATION_MARGIN - LOOT_ROTATION_GRACE - self.cfg['cubes']['pickup_radius'])
         for x in sorted(remembered_pickups,key=lambda x:(distance(p,x['pos'])-(2 if kinds[1] is None and pref.get(x['kind'],0)>=5 else 0),x['id'])):
             k=x['kind']; d=distance(p,x['pos']); dz=abs(p[2]-x['pos'][2]); old=kinds[1]; want=k not in kinds and k!='gun' and (old is None or pref.get(k,0)>pref.get(old,0)) and not (old=='laser' and weapons[1].get('charge',0)>0)
             if want and x['id'] in visible_pickups and d<=self.cfg['loot']['pickup_radius'] and dz<=4:
                 result['take']=x['id'];
                 if old is not None:result['drop']=1
                 break
-            if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
+            if want and d<155 and dz<36 and self.safe(x['pos'],z,pickup_margin) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
         for x in sorted(remembered_cubes,key=lambda c:distance(p,c['pos']))[:40]:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
-            if d<170 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):
+            if d<170 and dz<36 and self.safe(x['pos'],z,cube_margin) and self.objective_viable(p,x['pos'],me,z,t):
                 cap=self.cfg['cubes']['stat_cap']; thresholds=self.cfg['cubes']['upgrade_thresholds']; next_upgrade=min((n for n in thresholds if n>me['cubes']),default=100000)
                 extra=0 if me['cubes']<cap else 12 if next_upgrade-me['cubes']<=2 else 35
                 cluster=sum(1 for c in remembered_cubes[:160] if c['id']!=x['id'] and distance(c['pos'],x['pos'])<9 and abs(c['pos'][2]-x['pos'][2])<4)
@@ -700,7 +705,7 @@ class Bot:
         # Goal selection. Stay in a healthy part of the zone without blindly rushing its center.
         curd=distance(p,z['center']); nextd=distance(p,z['next_center']); next_r=z['next_radius']; current_margin=z['radius']-curd; next_margin=next_r-nextd
         travel_time=max(0.,nextd-max(0,next_r-18))/max(1.,stats['walk_speed']*.72)
-        urgency=(current_margin<18 or t+travel_time+10>z['shrink_end'] and next_margin<10 or next_r<30 and next_margin<6)
+        urgency=(current_margin<ZONE_ROTATION_MARGIN or t+travel_time+10>z['shrink_end'] and next_margin<10 or next_r<30 and next_margin<6)
         goal=None; mode='patrol'; hold=False; altitude=None; capture_radius=8.
         # Uncontested drops are powerful healing and upgrade opportunities.
         drops=[]
