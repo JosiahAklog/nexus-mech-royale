@@ -1,13 +1,13 @@
 ----------------------------------------------------------------------
-Ran 58 tests in 3.906s
+Ran 61 tests in 4.130s
 
 OK
-360 synthetic cases: max 1.01 ms, p99 0.90 ms
+360 synthetic cases: max 2.08 ms, p99 0.92 ms
 bot: python -u bot.py
-ready in 835 ms: name 'NEXUS-V24-adaptive'
+ready in 766 ms: name 'NEXUS-V26-adaptive'
 observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.3  p90 0.4  p99 1.5  max 1.8  (this machine, not the 1-CPU match container)
+answer time ms: p50 0.3  p90 0.4  p99 0.7  max 1.6  (this machine, not the 1-CPU match container)
 answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
 PASS
 
-V24: V21 policy unchanged; drone recovery movement, zone damage tracking and supply capture positioning. Live matches and Docker not tested.
+V26 adds bounded duel estimates, fight spacing, and second-horizon movement. No live matches or Docker tested.

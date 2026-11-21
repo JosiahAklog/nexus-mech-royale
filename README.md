@@ -1,3 +1,7 @@
+# V25 update
+
+Based on V24 (official score 4.77). Adds nearby weak-target priority, safe early cube preference and farming boost, escape energy reserve, and velocity-aware threat separation. Active attacker priority preserved. Live score unverified. See CHECK_RESULTS.txt.
+
 # NEXUS V21 — cover-aware adaptive candidate
 
 Derived from the existing V20 package. V9 (4.33) remains the last confirmed competition score. V21 is a hypothesis to test, not a guaranteed improvement.
@@ -48,3 +52,6 @@ The default remains adaptive. New changes: aim at a reachable portion of the tar
 
 ## V24
 Preserves V21 policy; fixes drone recovery movement, zone-damage tracking and supply capture positioning. Score unverified.
+
+## V26
+Adds bounded two-second damage-budget heuristics, enemy selection and fight spacing, plus 24 m terrain/zone lookahead. These are estimates, not simulated outcomes. Existing attacker priorities and weapon control retained.
