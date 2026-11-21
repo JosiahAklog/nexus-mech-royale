@@ -168,8 +168,8 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V26-'+self.profile
-        self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile
+        self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
         if t.get('kind')=='npc':return self.cfg['npc']['height']*.55
@@ -292,29 +292,89 @@ class Bot:
             if gone:del self.loot_seen[ident]
         return [obj for _,obj in self.loot_seen.values() if obj['id']>=8000],[obj for _,obj in self.loot_seen.values() if obj['id']<8000]
     def duel_value(self,me,target,d):
-        # Approximate two-second damage budgets; enemy upgrades/ammo are unknown.
-        def budget(kind,st,ready=0.,ammo=None):
+        # Expected damage over two seconds, including magazine, charge, and
+        # available energy. Two weapons can fire together, but Share an aim.
+        def budget(kind,st,ready=0.,ammo=None,energy=None,charge=0.):
             reach=st.get('range',st.get('speed',72)**2/max(1.,st.get('gravity',22)))
             if d>reach or ready>=2.:return 0.
-            accuracy={'gun':.72,'mortar':.40,'laser':.78,'lightning':.95}.get(kind,.5)
-            if kind=='mortar' and d<15:accuracy*=.35
-            cycle=st.get('cooldown',1.)+(st.get('charge',.75) if kind=='laser' else 0.)
-            shots=max(0.,(2.-ready)/max(.1,cycle))
+            accuracy={'gun':.83 if d<45 else .65 if d<100 else .42,'mortar':.48 if d<85 else .28,'laser':.80,'lightning':.96}.get(kind,.5)
+            if kind=='mortar' and d<15:accuracy*=.2
+            if kind=='laser':
+                ready+=max(0.,st['charge']-charge)
+                if ready>=2.:return 0.
+            cycle=st.get('cooldown',1.)+(st.get('charge',0.) if kind=='laser' else 0.)
+            shots=1.+max(0.,(2.-ready)/max(.1,cycle)-.5)
             if ammo is not None:shots=min(shots,ammo)
+            if kind=='lightning' and energy is not None:shots=min(shots,max(0.,energy-12)/max(.1,st['energy']))
             return st.get('damage',0.)*shots*accuracy
         own=[]
         for w in me['weapons']:
             if not w:continue
             k=w['kind']; ready=max(w.get('cooldown',0.),w.get('reload',0.))
-            if k=='lightning' and me['energy']<20:continue
-            v=budget(k,w['stats'],ready,w.get('ammo') if k=='gun' else None)
+            ammo=w.get('ammo') if k=='gun' else None
+            if k=='gun' and w.get('reload',0)>0:ammo=w['stats']['mag']
+            v=budget(k,w['stats'],ready,ammo,me['energy'],w.get('charge',0.))
             if k=='laser' and 'mortar' in target.get('weapons',[]):v*=1+w['stats'].get('cookoff',0.)
             own.append(v)
-        incoming=[budget(k,self.cfg['weapons'][k]) for k in target.get('weapons',[]) if k in self.cfg['weapons']]
-        scale=self.cfg['cubes']; cap=scale['stat_cap']; mult=scale['damage_per_cube']
-        dealt=max(own,default=0.)*(1+mult*min(cap,me['cubes']))
-        taken=max(incoming,default=0.)*(1+mult*min(cap,target.get('cubes',0)))
+        incoming=[]
+        for k in target.get('weapons',[]):
+            if k not in self.cfg['weapons']:continue
+            v=budget(k,self.cfg['weapons'][k])
+            if k=='laser' and any(w and w['kind']=='mortar' for w in me['weapons']):v*=1+self.cfg['weapons'][k].get('cookoff',0.)
+            incoming.append(v)
+        def combined(values):
+            v=sorted(values,reverse=True)
+            return v[0]+.5*sum(v[1:]) if v else 0.
+        scale=self.cfg['cubes'];cap=scale['stat_cap'];mult=scale['damage_per_cube']
+        dealt=combined(own)*(1+mult*min(cap,me['cubes']))
+        taken=combined(incoming)*(1+mult*min(cap,target.get('cubes',0)))*(1-me['stats'].get('armor',0.))
+        # Apply the public rear-armor rules to the current observed poses.
+        # This is a snapshot, not a guarantee the enemy will keep facing away.
+        base=self.cfg['mech']; rear=base['rear_mult']; half_arc=math.radians(base['front_arc_deg']*.5)
+        if abs(delta(bearing(target['pos'],me['pos']),target.get('aim',[0,0])[0]))>half_arc:dealt*=rear
+        if abs(delta(bearing(me['pos'],target['pos']),me['aim'][0]))>math.radians(me['stats'].get('front_arc_deg',base['front_arc_deg'])*.5):taken*=me['stats'].get('rear_mult',rear)
         return clip(dealt/max(100.,target.get('hp',1400))-taken/max(100.,me['hp']),-1.,1.)
+
+    def objective_viable(self,p,q,me,zone,t,wait=0.,lands_in=0.):
+        # Reject objectives that become unsafe before arrival and capture. The
+        # next circle is guaranteed inside the current one by the protocol.
+        if zone['radius']<25:return self.safe(q,zone,4)
+        d=distance(p,q);speed=max(1.,me['stats']['walk_speed']*.8)
+        arrival=t+max(d/speed,lands_in)+wait
+        if arrival<=zone['shrink_start']:return True
+        f=clip((arrival-max(t,zone['shrink_start']))/max(.1,zone['shrink_end']-max(t,zone['shrink_start'])),0.,1.)
+        center=tuple(a+(b-a)*f for a,b in zip(zone['center'],zone['next_center']))
+        radius=zone['radius']+(zone['next_radius']-zone['radius'])*f
+        return distance(q,center)<max(0.,radius-5.)
+
+    def explore_goal(self,p,me,zone,t):
+        # Online coverage map, no privileged spawn positions. Scout unvisited
+        # walkable ground with a broad view, rather than orbiting old locations.
+        best=None;bestscore=-1e9;heading=me['aim'][0]
+        for i,(dx,dy) in enumerate(DIR):
+            for length in (65.,125.):
+                q=(p[0]+dx*length,p[1]+dy*length)
+                if not self.safe(q,zone,24) or not self.objective_viable(p,q,me,zone,t):continue
+                top,ground,clear=self.map.surface(*q)
+                if clear<me['stats']['radius']+2 or top-ground>2:continue
+                key=(int(q[0]//45),int(q[1]//45));seen=self.visited.get(key,-1000.)
+                novelty=clip((t-seen)/90.,0.,1.)
+                direct=self.map.ray((p[0],p[1],p[2]+1.2),(q[0],q[1],ground+1.2))
+                score=30*novelty+min(12.,clear*.35)+(12 if direct else -5)-length*.065+4*(dx*cos(heading)+dy*sin(heading))
+                if score>bestscore:bestscore=score;best=q
+        return best
+
+    def opportunity_bonus(self,p,me,target,enemies,obs):
+        # Bounded third-party preference; never displace emergency attacker priority.
+        d=distance(p,target['pos'])
+        if d>85 or me['hp']<me['max_hp']*.65:return 0.
+        if target['id']==self.last_attacker and obs['t']-self.last_damage<3:return 0.
+        rivals=0
+        for e in enemies[:8]:
+            if e['id']==target['id'] or not e.get('weapons'):continue
+            if distance(e['pos'],target['pos'])<75 and abs(delta(bearing(e['pos'],target['pos']),e.get('aim',[0,0])[0]))<.28 and abs(delta(bearing(e['pos'],p),e.get('aim',[0,0])[0]))>.45:rivals+=1
+        weak=clip(1-target.get('hp',1400)/max(1,target.get('max_hp',1400)),0,1)
+        return min(16.,rivals*8.*weak) if self.duel_value(me,target,d)>-.12 else 0.
 
     def choose_target(self,p,me,obs,enemies,npcs,loot):
         eye=(p[0],p[1],p[2]+me['stats']['muzzle_height']); cand=[]; nearby_enemy=any(distance(p,e['pos'])<40 for e in enemies)
@@ -366,6 +426,7 @@ class Bot:
             if kind=='mech' and me['hp']<me['max_hp']*.36:score-=25
             if self.profile=='adaptive' and kind=='mech' and line:
                 score+=12*self.duel_value(me,t,d)
+                score+=self.opportunity_bonus(p,me,t,enemies,obs)
             cand.append((score,t,line))
         self.target_candidates=sorted(cand,key=lambda it:it[0],reverse=True)
         if not self.target_candidates:return None,False
@@ -377,17 +438,22 @@ class Bot:
             else:self.stuck=max(0.,self.stuck-dt*.75)
         self.last_pos=p[:]
         for e in obs['events']:
-            if e['type']=='damaged' and e.get('weapon')!='zone':self.last_damage=t;self.last_bearing=e.get('bearing');self.last_attacker=e.get('by')
+            if e['type']=='damaged' and e.get('weapon')!='zone':
+                self.last_damage=t;self.last_bearing=e.get('bearing');self.last_attacker=e.get('by');self.damage_recent.append((t,e.get('amount',0.)))
             if e['type']=='damaged' and e.get('weapon')=='zone':self.last_damage=t;self.last_attacker=None
             if e['type']=='hit':self.last_attack=t
         if self.last_hp is not None and me['hp']<self.last_hp-.5 and not me['in_zone']:self.last_damage=t
         self.last_hp=me['hp']; self.update_motion(obs)
+        self.damage_recent=[(when,amt) for when,amt in self.damage_recent if t-when<1.8]
+        burst=sum(amt for _,amt in self.damage_recent)/max(1.,me['max_hp'])
+        self.visited[(int(p[0]//45),int(p[1]//45))]=t
         enemies=sorted((e for e in obs['mechs'] if e['kind']=='mech'),key=lambda e:distance(p,e['pos'])); npcs=[e for e in obs['mechs'] if e['kind']=='npc']; close=[e for e in enemies if distance(p,e['pos'])<125]; near=close[0] if close else None; nd=distance(p,near['pos']) if near else 999.; danger=len([e for e in close if distance(p,e['pos'])<85]); recovering=hp<.56 and (danger>=1 or t-self.last_damage<5) and (nd>18 or danger>=2); recovering=recovering or (hp<.32 and danger>=1)
         # Hysteresis: after disengaging, stay out of combat until repair has actually worked.
         # Adapt retreat to pressure and the ability to finish a duel.
         policy=self.policy; retreat=policy['retreat']; recovery_goal=policy['heal']
         if self.profile=='adaptive':
             retreat=clip(retreat+(.10 if danger>=2 else 0.)-(.09 if near and near.get('hp',1400)<me['hp']*.45 and danger==1 else 0.),.46,.76)
+        if self.profile=='adaptive' and burst>.20 and hp<.72 and danger>=1 and (danger>=2 or not near or near.get('hp',1400)>me['hp']*.65):retreat=max(retreat,.73)
         if hp<retreat and (danger>=1 or t-self.last_damage<6) or hp<min(.50,retreat):
             if not self.recovering:self.recovery_since=t
             self.recovering=True
@@ -439,14 +505,17 @@ class Bot:
                 result['take']=x['id'];
                 if old is not None:result['drop']=1
                 break
-            if want and d<155 and dz<36 and self.safe(x['pos'],z):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
+            if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
         for x in sorted(remembered_cubes,key=lambda c:distance(p,c['pos']))[:40]:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
-            if d<170 and dz<36 and self.safe(x['pos'],z):
+            if d<170 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):
                 cap=self.cfg['cubes']['stat_cap']; thresholds=self.cfg['cubes']['upgrade_thresholds']; next_upgrade=min((n for n in thresholds if n>me['cubes']),default=100000)
                 extra=0 if me['cubes']<cap else 12 if next_upgrade-me['cubes']<=2 else 35
                 cluster=sum(1 for c in remembered_cubes[:160] if c['id']!=x['id'] and distance(c['pos'],x['pos'])<9 and abs(c['pos'][2]-x['pos'][2])<4)
-                loot.append((self.loot_cost(p,x,close,me)-69-policy['loot']+extra-min(30,cluster*10)-(12 if self.profile=='adaptive' and me['cubes']<4 and nd>90 and d<95 and hp>.75 else 0),x))
+                route_bonus=0.
+                if self.profile=='adaptive' and me['cubes']<cap and nd>75 and d<100:
+                    route_bonus=min(9.,cluster*3.) if self.map.ray((p[0],p[1],p[2]+1.2),(x['pos'][0],x['pos'][1],x['pos'][2]+1.2)) else 0.
+                loot.append((self.loot_cost(p,x,close,me)-route_bonus-69-policy['loot']+extra-min(30,cluster*10)-(12 if self.profile=='adaptive' and me['cubes']<4 and nd>90 and d<95 and hp>.75 else 0),x))
         loot.sort(key=lambda q:q[0]); lootgoal=loot[0][1] if loot else None
         target, line=self.choose_target(p,me,obs,enemies,npcs,lootgoal)
         if recovering and pressure and (target is None or target.get('kind')!='mech'):
@@ -496,7 +565,7 @@ class Bot:
                         w=weapons[j]; q=solutions[j]; k=w['kind']; st=w['stats']
                         if w['cooldown']>.11 or not q[3] or (k=='gun' and (w.get('reload',0)>0 or w.get('ammo',1)<=0)):continue
                         compatible=(abs(delta(q[0],a[0]))<=math.radians(st['cone_deg']*.42) if k=='lightning' else abs(delta(q[0],a[0]))<q[5]+.018 and abs(q[1]-a[1])<q[6]+.018)
-                        if compatible and (k!='lightning' or energy>=st.get('energy',3)+12):
+                        if compatible and (k!='lightning' or energy>=st.get('energy',3)+max(12,policy['reserve']+(8 if emergency_zone or recovering else 0))):
                             base+=priority(j)*.70
                     return base
                 active=max(good,key=combined_priority)
@@ -537,7 +606,7 @@ class Bot:
         for d in obs['drops']:
             dd=distance(p,d['pos']); threatened=any(distance(e['pos'],d['pos'])<32 for e in close)
             finishing=(d.get('holder')==me['id'] and d.get('lands_in',0)<=0 and dd<d['radius']*.85 and d.get('progress',0)>=max(0,d.get('capture_s',4)-.9) and hp>.25 and not any(distance(e['pos'],d['pos'])<d['radius']+3 for e in close))
-            if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240:
+            if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240 and (finishing or self.objective_viable(p,d['pos'],me,z,t,d.get('capture_s',4),d.get('lands_in',0))):
                 drops.append((dd-(1-hp)*120-(180 if finishing else 0)-(35 if d.get('holder')==me['id'] else 0),d))
         if drops and (hp<.98 or me['cubes']<15) and not urgency:
             d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';altitude=goal[2];capture_radius=d['radius'];hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<4
@@ -553,12 +622,13 @@ class Bot:
                 radial=clip((distance(p,drone['pos'])-29)/14,-1.,1.)
                 sx,sy=norm(ex*radial-ey*sign*.74,ey*radial+ex*sign*.74)
                 goal=(p[0]+sx*20,p[1]+sy*20);mode='farm';hold=False
-            elif not exposed and drone is None and nd>30 and t-self.last_damage>1.1 and current_margin>25:
+            elif not exposed and drone is None and nd>30 and t-self.last_damage>1.8 and current_margin>25:
                 self.roof_goal=None
                 nearby_cubes=[c for c in remembered_cubes if distance(p,c['pos'])<13 and abs(p[2]-c['pos'][2])<3 and self.safe(c['pos'],z,12)]
                 if nearby_cubes and me['cubes']<self.cfg['cubes']['stat_cap']:
                     goal=min(nearby_cubes,key=lambda c:distance(p,c['pos']))['pos'];mode='loot';altitude=goal[2]
                 else:goal=p;mode='repair';hold=True
+            elif not exposed and self.last_bearing is not None and t-self.last_damage<2.0:ex,ey=-cos(self.last_bearing),-sin(self.last_bearing)
             elif near:ex,ey=norm(p[0]-near['pos'][0],p[1]-near['pos'][1])
             elif drone is not None:ex,ey=norm(p[0]-drone['pos'][0],p[1]-drone['pos'][1])
             elif self.last_bearing is not None:ex,ey=-cos(self.last_bearing),-sin(self.last_bearing)
@@ -598,6 +668,7 @@ class Bot:
                 elif self.profile=='survivor':ideal+=20
                 elif me['cubes']>=5 and hp>.75 and danger<=1 and target.get('hp',1400)<me['hp']*.8:ideal=max(24,ideal-12)
                 if danger>=2:ideal+=18
+                if self.profile=='adaptive' and obs.get('alive',16)<=5 and danger>=2 and hp<.85:ideal+=8
                 if 'lightning' in kinds and 'laser' in target.get('weapons',[]) and danger<=1 and hp>.62:ideal=32
                 if 'laser' in kinds and 'mortar' in target.get('weapons',[]):ideal=85
                 if hp<.72:ideal+=10
@@ -619,6 +690,8 @@ class Bot:
                     sx,sy=norm(ex*radial-ey*sign*.74,ey*radial+ex*sign*.74)
                     goal=(p[0]+sx*22,p[1]+sy*22);hold=False;altitude=None
         if goal is None:
+            if self.profile=='adaptive' and me['cubes']<10 and nd>85 and not recovering and (self.goal_memory is None or distance(p,self.goal_memory)<18 or t-self.explore_at>10 or not self.safe(self.goal_memory,z,18)):
+                self.goal_memory=self.explore_goal(p,me,z,t);self.explore_at=t
             if self.goal_memory is None or distance(p,self.goal_memory)<15 or not self.safe(self.goal_memory,z,18) or (t+12>z['shrink_end'] and distance(self.goal_memory,z['next_center'])>max(0,next_r-8)):
                 angle=.8+self.slot*2.399+int(t/14)*1.7; r=min(max(0,next_r*.78),220); self.goal_memory=(z['next_center'][0]+cos(angle)*r,z['next_center'][1]+sin(angle)*r)
             goal=self.goal_memory;mode='patrol'
@@ -667,6 +740,10 @@ class Bot:
             or mode=='farm' and not recovering and nd>90 and gd>35 and energy>(78 if self.profile=='adaptive' and me['cubes']<4 and hp>.8 else 85) and me['cubes']<6
             or mode=='fight' and danger and ((nd<27 and energy>52 and 'lightning' not in kinds) or (self.profile=='aggressive' and nd>35 and nd<85 and energy>62 and 'lightning' in kinds and hp>.65))
             or mode=='patrol' and energy>90 and gd>70)
+        if mode!='escape' or emergency_zone:self.escape_recharge=False
+        elif energy<24:self.escape_recharge=True
+        elif energy>=55:self.escape_recharge=False
+        if self.escape_recharge and mode=='escape' and nd>28:ground_boost=False
         charge_mult=stats.get('charge_move_mult',.5) if any(w and w['kind']=='laser' and result['fire'][i] for i,w in enumerate(weapons)) else 1.
         risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['walk_speed']*charge_mult)
         fast_risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['boost_speed']*charge_mult) if ground_boost and projectiles else risks
@@ -680,6 +757,11 @@ class Bot:
                 # Do not accidentally leave a nearly captured healing drop.
                 q=(p[0]+dx*stats['walk_speed']*.35,p[1]+dy*stats['walk_speed']*.35)
                 if distance(q,goal)>capture_radius-.5:score-=18
+            if self.profile=='adaptive' and mode in ('escape','fight') and not hold and near and burst>.08:
+                for e in exposed[:3]:
+                    if distance(p,e['pos'])>90:continue
+                    eyaw=e['aim'][0]; side=abs(dx*sin(eyaw)-dy*cos(eyaw))
+                    if abs(delta(bearing(e['pos'],p),eyaw))<.35:score+=side*(5. if e.get('charging') else 2.)
             if mode=='fight' and near and near.get('charging'):
                 ang=bearing(near['pos'],p); eyaw=near.get('aim',[0,0])[0]
                 if abs(delta(ang,eyaw))<.35:score+=8*abs(dx*sin(eyaw)-dy*cos(eyaw))
@@ -724,6 +806,11 @@ class Bot:
                     if (recovering or reloading_cover) and not hold and old<100 and not self.map.ray((xx,yy,p[2]+stats['eye_height']),(e['pos'][0],e['pos'][1],e['pos'][2]+self.target_height(e))):score+=policy['cover'] if recovering else 9
             if self.profile=='adaptive' and mode=='fight' and danger>=2 and not hold and not recovering:
                 score+=self.fight_cover_value(p,future,me,target,close)
+                if obs.get('alive',16)<=5:
+                    # Stay away from secondary threats during the final circle.
+                    for e in exposed[:4]:
+                        if target and e['id']==target['id']:continue
+                        score+=clip((distance(future,e['pos'])-distance(p,e['pos']))*.15,-2.,2.)
             can_boost=ground_boost and hypot(dx,dy)>.25 and self.map.top(p[0]+dx*4,p[1]+dy*4)<p[2]+stats['step_up']+.55
             # Modest progress bonus for sprinting toward the objective; oncoming
             # projectiles can instead make a walking direction preferable.

@@ -1,57 +1,24 @@
-# V25 update
+# NEXUS V28.1 — audited tactical candidate
 
-Based on V24 (official score 4.77). Adds nearby weak-target priority, safe early cube preference and farming boost, escape energy reserve, and velocity-aware threat separation. Active attacker priority preserved. Live score unverified. See CHECK_RESULTS.txt.
-
-# NEXUS V21 — cover-aware adaptive candidate
-
-Derived from the existing V20 package. V9 (4.33) remains the last confirmed competition score. V21 is a hypothesis to test, not a guaranteed improvement.
+Based on V27 locally; V26 (4.83) is the latest user-confirmed competitive result. V27 has no reported score. V28 is an experimental candidate targeting improved placement, not a certified 6.95 score.
 
 ## Changes
-- During multi-opponent fights, favor positions with a clear shot at the selected target and cover from secondary opponents.
-- Give a ready, aligned gun priority for lethal shots rather than starting a fresh laser charge.
-- Prefer lightning over mortar in close, energy-sufficient multi-opponent fights.
-- Discard outdated patrol goals near the end of a zone shrink.
-- Three new regression tests; 58 total tests passed. Native and fallback protocol checks each passed 300 observations. V21 and V20 produce identical actions on this short, noninteractive replay; new cases are exercised in targeted tests.
+- Two-second combat budget accounts for partially compatible second weapons, gun reloads, laser charge, lightning energy, range-dependent estimated accuracy, armor and rear exposure.
+- Recent damage burst can trigger earlier retreat against dangerous opponents; movement favors lateral evasion while under fire.
+- Future-zone feasibility filters risky distant weapons, cubes and supply drops.
+- Online patrol coverage favors recently unvisited, walkable, visible ground when no immediate goal is available and cube count is below 10.
+- Retreat energy recharge hysteresis prevents repeated short boosts when reserves are low, except against close threats or in a zone emergency.
+- Recent unseen damage bearing guides escape; slightly longer quiet interval before standing still for repair.
 
-## Submission
-Replace the seven files in the update ZIP at the root of your existing GitHub repository. The Dockerfile and runtime dependencies from V20 remain unchanged. Keep previous scored commits public. Submit the commit to the Mech Royale track, then compare its individual scored result. No Docker runtime or interactive match simulator was available locally.
+All decisions use current protocol observations, remembered observations, and the supplied public map. V27's core targeting, projectile avoidance, runtime dependencies and Dockerfile are retained.
 
-Run `python -m unittest test_bot test_profiles test_v20 test_v21 -q` and `python check/check.py -- python -u bot.py` from the complete package directory.
+## V28.1 audit corrections
+- Use the configured rear-armor multiplier and front arc on both sides of the combat estimate.
+- Calculate supply-drop completion as max(travel time, time to landing) plus capture time, instead of combining landing and capture as a single maximum.
+- Four additional regression tests; no broad tuning of V28 strategies.
 
-# NEXUS V20 — adaptive combat prioritization
+## Validation
+Run `python -m unittest discover -q` and `python check/check.py -- python -u bot.py` from the complete package. See CHECK_RESULTS.txt. The checker plays recorded observations and does not simulate battle outcomes. Docker runtime and actual standings were not tested here. Keep the highest-scoring prior commit available and compare the official score for this candidate separately.
 
-Submit this variant first, then measure the aggressive and survivor variants separately. V9 (4.33) is the last user-confirmed scored version. V20 is not a match-tested improvement.
-
-## V20 changes
-- Prioritize a recent visible attacker over farming targets.
-- Exclude crates when selecting a target for return fire during recovery.
-- Do not pursue distant loot instead of fighting a vulnerable enemy or recent attacker; nearby loot is still allowed.
-- Derive preferred lightning fighting distance from its live range.
-- Consider visible incoming projectiles up to 165 m away, still capped at 32 projectiles.
-- Four new regression tests, all passed. 55 total test methods passed. Official checker passed with and without native acceleration (600 recorded observations total). Compared with V19, 4 of 300 recorded actions changed. These observations are not a simulator. Actual Docker and battle performance are unverified.
-
-Run: `python -m unittest test_bot test_profiles test_v20` and `python check/check.py -- python -u bot.py`.
-
-# NEXUS V17 — Adaptive
-
-Retreat threshold depends on enemy numbers and relative health, early farming, close-range opportunistic weapon choice.
-
-All three variants share the V14 protocol wrapper, map cache, native acceleration and Dockerfile. Each has its own default policy selected at the top of bot.py. The variants fix empty gun reload requests, improve resource prioritization and widen patrol scans. They only use legal protocol observations and the supplied map.
-
-## Submit
-Replace bot.py, test_bot.py, test_profiles.py, README.md and CHECK_RESULTS.txt at the root of the existing NEXUS repository. Do not upload the ZIP itself. Commit directly to the default branch and submit that commit to Mech Royale. The remaining runtime files are unchanged from V14. Keep all submitted commits accessible.
-
-## Tests
-`python -m unittest test_bot test_profiles -q` checks 45 test methods, including direct replay and synthetic data for all three profiles. `python check/check.py -- python -u bot.py` checks the selected profile. CHECK_RESULTS.txt contains local native and fallback runs. The recorded observations are not interactive battles. Docker and real match scores are not verified. The confirmed previous score is 4.33; compare the individual attempt scores before choosing the best policy.
-
-## V18 changes
-Default policy remains adaptive. If the highest-ranked target has no viable predicted firing solution, examine at most three alternate targets and use the first with a viable weapon. Avoid idle airborne jetting while holding a recovery/capture position. Two targeted regression tests were added (47 total test methods). These are protocol and scenario tests, not actual battle results. The V15/V16/V17 comparison should still be scored separately; this version is an additional candidate, not a demonstrated improvement over 4.33.
-
-## V19 changes
-The default remains adaptive. New changes: aim at a reachable portion of the target when its midpoint falls outside pitch limits; orbit NPCs at about 29 m rather than holding still at close range; favor a ready gun over starting a laser charge in a close, multi-opponent fight when mobility matters; allow proactive gun reloads in either slot. Added four regression tests. The bot announces NEXUS-V19-adaptive at startup. The native helper and Dockerfile remain unchanged. No official match score for V19; no local Docker execution. Use a distinct submitted commit SHA for each variant and compare the individual scores. V9's 4.33 is the last confirmed best score supplied by the user.
-
-## V24
-Preserves V21 policy; fixes drone recovery movement, zone-damage tracking and supply capture positioning. Score unverified.
-
-## V26
-Adds bounded two-second damage-budget heuristics, enemy selection and fight spacing, plus 24 m terrain/zone lookahead. These are estimates, not simulated outcomes. Existing attacker priorities and weapon control retained.
+## Upload
+If V28 is already present in GitHub, upload the four files in the V28.1 Audit Update ZIP to the root and commit them. Otherwise use the complete ZIP, preserving `arena/v2/` and `check/` folders. Submit the new commit to the competition, without replacing the best final entry until a better official score is returned.
