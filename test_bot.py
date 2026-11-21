@@ -116,6 +116,112 @@ class Tests(unittest.TestCase):
         o=scenario();me=o['self'];me['hp']=400;me['cubes']=1;q=self.b.map.point(self.b.map.nearest(me['pos']));me['pos']=[*q,self.b.map.ground(*q)];me['in_zone']=True
         p=me['pos'];self.b.map.surface=lambda x,y:(p[2],p[2],20.);self.b.map.top=lambda x,y:p[2];o['cubes']=[{'id':5001,'pos':[p[0]+9,p[1],p[2]]}]
         a=self.validate(o);self.assertTrue(self.b.recovering);self.assertGreater(a['move'][0],.4);self.assertFalse(any(a['fire']))
+    def test_motion_prediction_bounded(self):
+        o=scenario(); t=enemy(o);t['vel']=[0.,0.,0.];o['mechs']=[t];self.b.update_motion(o)
+        o['t']+=.1;t['vel']=[0.,10.,0.];self.b.update_motion(o);self.b.map.top=lambda x,y:-100.
+        x,y,z=self.b.predict_target(t,.5);self.assertGreater(y,t['pos'][1]+5);self.assertLessEqual(y,t['pos'][1]+10)
+        self.b.map.top=lambda x,y:100.;x,y,z=self.b.predict_target(t,.5);self.assertAlmostEqual(y,t['pos'][1]+1.2)
+    def test_lethal_laser_releases_early(self):
+        o=scenario();m=o['self'];m['hp']=m['max_hp'];m['weapons']=[weapon('gun'),weapon('laser')];m['weapons'][1]['charge']=.3;o['mechs']=[enemy(o,2,40,0,80)];self.b.map.ray=lambda a,b:True
+        self.b.intercept=lambda *args:(0.,0.,True,True,40.,.1,.1)
+        a=self.validate(o);self.assertFalse(a['fire'][1]);self.assertTrue(a['fire'][0])
+    def test_upgrade_early_gun_mag(self):
+        o=scenario();o['self']['cubes']=1;o['offer']={'choices':[{'id':'gun_mag'},{'id':'gun_rate'},{'id':'sensors'}]};self.assertEqual(self.validate(o)['pick'],0)
+    def test_pickup_cluster_priority(self):
+        o=scenario();p=o['self']['pos'];o['self']['hp']=o['self']['max_hp'];o['self']['cubes']=0
+        self.b.map.surface=lambda x,y:(p[2],p[2],20.);self.b.map.top=lambda x,y:p[2];self.b.map.ray=lambda a,b:True
+        o['cubes']=[{'id':5000,'pos':[p[0]-11,p[1],p[2]]}]+[{'id':5001+i,'pos':[p[0]+19,p[1]+i,p[2]]} for i in range(4)]
+        a=self.validate(o);self.assertGreater(a['move'][0],0.)
+    def test_roof_escape_commit(self):
+        o=scenario();m=o['self'];m['hp']=400;m['energy']=100;m['grounded']=True;p=m['pos'];o['mechs']=[enemy(o,2,25,0)];o['events']=[{'type':'damaged','weapon':'gun','by':2,'amount':45,'bearing':0.}]
+        self.b.map.ray=lambda a,b:True
+        self.b.map.surface=lambda x,y:(p[2]+12 if x<p[0]-8 else p[2],p[2],20.)
+        self.b.map.top=lambda x,y:self.b.map.surface(x,y)[0]
+        a=self.validate(o);self.assertIsNotNone(self.b.roof_goal);self.assertTrue(a['jump']);goal=self.b.roof_goal
+        o['t']+=.1;o['tick']+=2;m['grounded']=False;m['energy']=45;o['events']=[]
+        a=self.validate(o);self.assertEqual(self.b.roof_goal,goal);self.assertTrue(a['boost']);self.assertLess(a['move'][0],0.)
+    def test_opportunistic_recovery(self):
+        o=scenario();m=o['self'];m['hp']=m['max_hp']*.70
+        q=self.b.map.point(self.b.map.nearest(m['pos']));m['pos']=[*q,self.b.map.ground(*q)]
+        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertFalse(any(a['fire']));self.assertLess(math.hypot(*a['move']),.01)
+    def test_charged_laser_target_commitment(self):
+        o=scenario();m=o['self'];m['weapons']=[weapon('gun'),weapon('laser')];m['weapons'][1]['charge']=.4
+        self.b.map.ray=lambda a,b:True
+        a=enemy(o,2,60,0,620);b=enemy(o,3,45,0,465);self.b.target_id=2
+        self.assertEqual(self.b.choose_target(m['pos'],m,o,[a,b],[],None)[0]['id'],2)
+    def test_retreat_no_premature_reload(self):
+        o=scenario();m=o['self'];m['hp']=500;m['weapons']=[weapon('gun'),None];m['weapons'][0]['ammo']=5
+        o['mechs']=[enemy(o,2,45,0)];o['events']=[{'type':'damaged','weapon':'gun','by':2,'amount':45,'bearing':0.}]
+        self.b.map.ray=lambda a,b:True;self.b.intercept=lambda *args:(0.,0.,True,False,45.,.04,.04)
+        a=self.validate(o);self.assertFalse(a['fire'][0]);self.assertFalse(a.get('reload',False))
+    def test_early_safe_loot_boost(self):
+        o=scenario();m=o['self'];m['energy']=65;m['hp']=m['max_hp'];m['grounded']=True;m['cubes']=0
+        p=m['pos'];self.b.map.surface=lambda x,y:(p[2],p[2],20.);self.b.map.top=lambda x,y:p[2];self.b.map.ray=lambda a,b:True
+        o['cubes']=[{'id':5000,'pos':[p[0]+30,p[1],p[2]]}]
+        a=self.validate(o);self.assertTrue(a['boost']);self.assertGreater(a['move'][0],.4)
+    def test_supply_drop_boost_and_braking(self):
+        o=scenario();me=o['self'];me['hp']=me['max_hp']*.85;me['energy']=80.;me['grounded']=True;p=me['pos']
+        self.b.map.surface=lambda x,y:(p[2],p[2],20.);self.b.map.top=lambda x,y:p[2];self.b.map.ray=lambda a,b:True
+        o['drops']=[{'id':20000,'pos':[p[0]+30,p[1],p[2]],'radius':8,'lands_in':0,'capture_s':4,'progress':0,'holder':None}]
+        a=self.validate(o);self.assertEqual(self.b.last_mode,'drop');self.assertTrue(a['boost']);self.assertGreater(a['move'][0],.5)
+        me['pos'][0]+=30;o['t']+=.1;o['tick']+=2;a=self.validate(o);self.assertFalse(a['boost']);self.assertLess(math.hypot(*a['move']),.01)
+    def test_boost_does_not_run_into_predicted_projectile(self):
+        o=scenario();m=o['self'];m['energy']=95.;m['hp']=m['max_hp'];m['grounded']=True;p=m['pos'];m['weapons']=[weapon('gun'),None]
+        self.b.map.surface=lambda x,y:(p[2],p[2],20.);self.b.map.top=lambda x,y:p[2];self.b.map.ray=lambda a,b:True
+        o['cubes']=[{'id':5000,'pos':[p[0]+35,p[1],p[2]]}];o['projectiles']=[{'id':950,'kind':'gun','pos':[p[0]+15,p[1],p[2]+4],'vel':[-100.,0.,0.]}]
+        speeds=[]
+        def risk(candidates,projectiles,p,me,g,s,speed_override=None):
+            speeds.append(speed_override);return [100. if speed_override==me['stats']['boost_speed'] else 0. for _ in candidates]
+        self.b.map.projectile_risks=risk
+        a=self.validate(o);self.assertIn(m['stats']['walk_speed'],speeds);self.assertIn(m['stats']['boost_speed'],speeds);self.assertFalse(a['boost'])
+    def test_recovery_finishes_weak_exposed_target(self):
+        o=scenario();m=o['self'];m['hp']=500;m['weapons']=[weapon('gun'),None];o['mechs']=[enemy(o,2,50,0,100)]
+        self.b.map.ray=lambda a,b:True;self.b.intercept=lambda *args:(0.,0.,True,True,50.,.04,.04)
+        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertTrue(a['fire'][0])
+    def test_vertical_prediction_not_below_ground(self):
+        o=scenario();e=enemy(o);e['pos'][2]=10.;e['vel']=[0.,0.,-18.];self.b.map.ground=lambda x,y:0.;self.b.map.top=lambda x,y:0.
+        self.assertEqual(self.b.predict_target(e,.6)[2],0.)
+    def test_charge_requires_reasonable_pitch_alignment(self):
+        o=scenario();m=o['self'];m['hp']=m['max_hp'];m['weapons']=[None,weapon('laser')];o['mechs']=[enemy(o,2,50,0,600)]
+        self.b.map.ray=lambda a,b:True;self.b.intercept=lambda *args:(0.,.9,True,False,50.,.04,.04)
+        self.assertFalse(self.validate(o)['fire'][1]);m['aim'][1]=.7;o['t']+=.1;o['tick']+=2
+        self.assertTrue(self.validate(o)['fire'][1])
+    def test_loot_cost_penalizes_detour(self):
+        o=scenario();m=o['self'];p=m['pos'];obj={'id':5000,'pos':[p[0]+30,p[1],p[2]]}
+        self.b.map.ray=lambda a,b:True
+        direct=self.b.loot_cost(p,obj,[],m)
+        self.b.map.ray=lambda a,b:False
+        self.assertGreater(self.b.loot_cost(p,obj,[],m),direct)
+    def test_loot_cost_penalizes_contested_cube(self):
+        o=scenario();m=o['self'];p=m['pos'];obj={'id':5000,'pos':[p[0]+35,p[1],p[2]]}
+        self.b.map.ray=lambda a,b:True
+        direct=self.b.loot_cost(p,obj,[],m)
+        e=enemy(o,2,32,0)
+        self.assertGreater(self.b.loot_cost(p,obj,[e],m),direct+10)
+    def test_retreat_pressure_pursuer(self):
+        o=scenario();m=o['self'];p=m['pos'];e=enemy(o,2,60,0);e['vel']=[-10.,0.,0.];e['aim']=[math.pi,0.]
+        self.assertTrue(self.b.retreat_pressure([e],p,m,o['t']))
+        e['vel']=[10.,0.,0.]
+        self.assertFalse(self.b.retreat_pressure([e],p,m,o['t']))
+        self.assertFalse(self.b.retreat_pressure([],p,m,o['t']))
+    def test_low_energy_roof_loot_cost(self):
+        o=scenario();m=o['self'];p=m['pos'];obj={'id':5000,'pos':[p[0]+20,p[1],p[2]+15]}
+        m['energy']=80.;cost=self.b.loot_cost(p,obj,[],m)
+        m['energy']=10.;self.assertGreater(self.b.loot_cost(p,obj,[],m),cost)
+    def test_recovery_defends_against_drone(self):
+        o=scenario();m=o['self'];p=m['pos'];m['hp']=450;m['weapons']=[weapon('gun'),None]
+        o['mechs']=[{'id':104,'kind':'npc','pos':[p[0]+25,p[1],p[2]],'hp':150,'max_hp':350,'vel':[0.,0.,0.],'aim':[math.pi,0.]}]
+        o['events']=[{'type':'damaged','weapon':'npc','by':104,'amount':25,'bearing':0.}]
+        self.b.map.ray=lambda a,b:True;self.b.intercept=lambda *args:(0.,0.,True,True,25.,.04,.04)
+        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertTrue(a['fire'][0]);self.assertEqual(self.b.last_mode,'repair')
+        o['t']+=.1;o['tick']+=2;o['events']=[];o['mechs']=[]
+        self.assertFalse(any(self.validate(o)['fire']))
+    def test_long_range_targeting_uses_weapon_stats(self):
+        o=scenario();m=o['self'];m['hp']=m['max_hp'];m['weapons']=[weapon('gun'),weapon('laser')];e=enemy(o,2,245,0,600)
+        self.b.map.ray=lambda a,b:True
+        self.assertEqual(self.b.choose_target(m['pos'],m,o,[e],[],None)[0]['id'],2)
+        m['weapons'][1]=None
+        self.assertIsNone(self.b.choose_target(m['pos'],m,o,[e],[],None)[0])
     def test_stress(self):
         rng=random.Random(44); samples=[]
         for i in range(360):

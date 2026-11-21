@@ -1,11 +1,6 @@
-NEXUS V9 verification — actual commands executed on clean V8 extraction
-Native unit suite: 22/22 passed, including 360 synthetic cases and direct replay actions.
-Python fallback unit suite: 20 passed, 2 native-only skipped; 360 synthetic cases.
-Native replay on default Python: 300/300, p50 0.3 ms, p99 0.6 ms, max 1.5 ms.
-Native replay on system Python 3.13: 300/300, p50 0.2 ms, p99 0.5 ms, max 1.0 ms.
-Restricted runtime replay (one CPU, 512 MiB address-space limit, uid/gid 65534, read-only bot directory, Python 3.13): 300/300, p50 0.2 ms, p99 0.5 ms, max 0.9 ms.
-Python fallback replay: 300/300, p50 0.3 ms, p99 2.2 ms, max 5.5 ms.
-All replay runs: zero missed deadlines, wrong ticks and bad lines.
-All Python files compile; C source compiles with -Wall -Wextra -Werror; rebuilt shared library and regenerated map cache/metadata byte-identical to packaged versions.
-Official wrapper, schema, protocol, map, replay and checker byte-identical to supplied kit.
-Docker executable unavailable; actual container validation and match placement remain unverified. No live simulator or private match seeds supplied. Prior V5 score 3.88 is the only measured competition score provided by the team.
+NEXUS V14 verification
+Native: 42 unit tests passed, including 360 synthetic cases; max 0.74 ms / p99 0.72 ms in local stress test.
+Official replay native: 300/300 timely; p50 0.2 ms, p99 0.5 ms, max 1.7 ms; no wrong ticks, invalid lines or timeouts.
+Fallback: 40 tests passed, 2 native-only tests skipped. Official replay passed 300/300.
+Python bytecode compilation and C compilation with -Wall -Wextra -Werror passed.
+No actual Docker build or live match simulation performed. V14 score unknown.
