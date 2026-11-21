@@ -582,7 +582,11 @@ class Bot:
                 result['take']=x['id'];
                 if old is not None:result['drop']=1
                 break
-            if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
+            if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):
+                value = 42 + policy['loot'] if old is None else 10
+                if old is None and x['id'] in visible_pickups and d <= 50 and dz <= 4 and nd > 65 and hp >= .75:
+                    value += 32
+                loot.append((self.loot_cost(p,x,close,me)-value,x))
         for x in sorted(remembered_cubes,key=lambda c:distance(p,c['pos']))[:40]:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
             if d<170 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):
