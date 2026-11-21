@@ -172,6 +172,7 @@ class Bot:
     def __init__(self,hello,profile=None):
         self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V37-'+self.variant if self.variant!='baseline' else self.name
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False
+        self.laser_cover = None
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
         if t.get('kind')=='npc':return self.cfg['npc']['height']*.55
@@ -203,6 +204,35 @@ class Bot:
                 vx,vy=e.get('vel',(0.,0.,0.))[:2]; dx,dy=norm(p[0]-e['pos'][0],p[1]-e['pos'][1])
                 if vx*dx+vy*dy>3.5 and e.get('weapons') and abs(delta(bearing(e['pos'],p),e.get('aim',[0,0])[0]))<.65:return True
         return False
+
+    def laser_origin(self, enemy):
+        scale = 1 + self.cfg['cubes']['size_per_cube'] * enemy.get('cubes', 0)
+        x, y, z = enemy['pos']
+        return x, y, z + self.cfg['mech']['muzzle_height'] * scale
+
+    def find_laser_cover(self, me, zone, t, origin):
+        """Find nearby ground reachable before the next full laser charge."""
+        p = me['pos']
+        stats = me['stats']
+        if not me['grounded'] or not self.map.ray(origin, (*p[:2], p[2] + stats['height'])):
+            return None
+        for step in (12., 18., 25., 34.):
+            candidates = []
+            for dx, dy in DIR:
+                x, y = p[0] + dx * step, p[1] + dy * step
+                top, ground, clearance = self.map.surface(x, y)
+                goal = (x, y, ground)
+                if top > ground + stats['step_up'] or clearance < stats['radius'] + 1.5:
+                    continue
+                if not self.safe(goal, zone, 24) or not self.objective_viable(p, goal, me, zone, t):
+                    continue
+                if self.map.ray(origin, (x, y, ground + stats['height'])):
+                    continue
+                if self.map.ray((*p[:2], p[2] + 1.1), (x, y, ground + 1.1)):
+                    candidates.append((dx * me['vel'][0] + dy * me['vel'][1], goal))
+            if candidates:
+                return max(candidates, key=lambda entry: entry[0])[1]
+        return None
     def fight_cover_value(self,p,future,me,target,threats):
         # Prefer a firing lane to the selected target and solid cover from other
         # opponents. Evaluate at the predicted ground/roof height, not at a
@@ -727,6 +757,40 @@ class Bot:
         if goal is None and urgency:
             if hp<.78 and target and target.get('kind')!='mech':result['fire']=[False,False]
             ux,uy=norm(p[0]-z['next_center'][0],p[1]-z['next_center'][1]); r=max(0,next_r-min(42,max(12,next_r*.35)));goal=(z['next_center'][0]+ux*r,z['next_center'][1]+uy*r);mode='zone'
+        # A gun-only mech can survive the opening beam without trading in the
+        # same lane. Commit only when there is nearby cover we can reach.
+        if goal is None and self.variant == 'combat' and kinds == ['gun', None] and me['cubes'] < 4 and nd > 90 and current_margin > 25:
+            if self.laser_cover is not None and (t >= self.laser_cover[0] or not recovering):
+                self.laser_cover = None
+            near_pickup = any(obj['kind'] != 'gun' and distance(p, obj['pos']) < 12
+                and abs(p[2] - obj['pos'][2]) < 4 for obj in remembered_pickups)
+            if not self.recovering and not near_pickup:
+                laser_hit = max((event for event in obs['events'] if event['type'] == 'damaged'
+                    and event.get('weapon') == 'laser' and event.get('amount', 0) >= .16 * me['max_hp']),
+                    key=lambda event: event['amount'], default=None)
+                if laser_hit is not None:
+                    attacker = next((enemy for enemy in enemies if enemy['id'] == laser_hit.get('by')), None)
+                    if attacker is not None:
+                        origin = self.laser_origin(attacker)
+                        cover = self.find_laser_cover(me, z, t, origin)
+                        if cover is not None:
+                            self.laser_cover = (t + 3., attacker['id'], origin, cover)
+                            self.recovering = recovering = True
+                            self.recovery_since = t
+            if self.laser_cover is not None and not near_pickup:
+                deadline, attacker_id, origin, cover = self.laser_cover
+                attacker = next((enemy for enemy in enemies if enemy['id'] == attacker_id), None)
+                if attacker is not None:
+                    origin = self.laser_origin(attacker)
+                    self.laser_cover = (deadline, attacker_id, origin, cover)
+                if self.safe(cover, z, 24) and not self.map.ray(origin, (*cover[:2], cover[2] + stats['height'])):
+                    result['fire'] = [False, False]
+                    if self.map.ray(origin, (*p[:2], p[2] + stats['height'])):
+                        goal, mode = cover, 'escape'
+                    else:
+                        goal, mode, hold = p, 'repair', True
+        else:
+            self.laser_cover = None
         if goal is None and recovering:
             # If hidden and safe, stop spending energy and let HP restore rather than wandering into combat.
             if drone_defense and current_margin>25:
