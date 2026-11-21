@@ -168,7 +168,7 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V37-'+self.variant if self.variant!='baseline' else self.name
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V38-arc-'+self.variant if self.variant!='baseline' else self.name
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
@@ -663,6 +663,26 @@ class Bot:
                     elif s[2] and same and s[3] and (not recovering or target.get('kind')=='mech' and pressure or drone_defense):
                         result['fire'][i]=bool(k!='lightning' or energy>=st.get('energy',3)+policy['reserve']+(8 if self.profile=='adaptive' and (recovering or emergency_zone) and target.get('hp',1000)>st.get('damage',0) else 0))
             else:aim=[bearing(p,target['pos']),0.]
+        # Lightning checks yaw independently of pitch. When a gun or mortar is
+        # steering the torso, keep its aim and use a legal simultaneous arc.
+        if target and target.get('kind') == 'mech' and line and 'lightning' in kinds:
+            slot = kinds.index('lightning')
+            arc = weapons[slot]
+            arc_stats = arc['stats']
+            turn = stats['turn_rate'] / self.cfg['match']['tick_hz']
+            actual_yaw = me['aim'][0]
+            yaw_next = actual_yaw + clip(delta(aim[0], actual_yaw), -turn, turn)
+            target_yaw = bearing(p, target['pos'])
+            cone = math.radians(arc_stats['cone_deg'])
+            reserve = policy['reserve'] + (8 if emergency_zone or recovering else 0)
+            # Both ends of the first-tick turn must be inside the cone.
+            within_arc = max(abs(delta(target_yaw, yaw)) for yaw in (actual_yaw, yaw_next)) < cone
+            endpoint = (*target['pos'][:2], target['pos'][2] + self.target_height(target))
+            muzzle = (*p[:2], p[2] + stats['muzzle_height'])
+            if ((not recovering or pressure) and arc['cooldown'] <= 0.05 and
+                energy >= arc_stats['energy'] + reserve and within_arc and
+                math.dist(muzzle, endpoint) < arc_stats['range'] and self.map.ray(muzzle, endpoint)):
+                result['fire'][slot] = True
         if recovering and not pressure and not drone_defense:result['fire']=[False,False]
         if emergency_zone:
             for i,w in enumerate(weapons):
