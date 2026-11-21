@@ -1,6 +1,25 @@
-NEXUS V14 verification
-Native: 42 unit tests passed, including 360 synthetic cases; max 0.74 ms / p99 0.72 ms in local stress test.
-Official replay native: 300/300 timely; p50 0.2 ms, p99 0.5 ms, max 1.7 ms; no wrong ticks, invalid lines or timeouts.
-Fallback: 40 tests passed, 2 native-only tests skipped. Official replay passed 300/300.
-Python bytecode compilation and C compilation with -Wall -Wextra -Werror passed.
-No actual Docker build or live match simulation performed. V14 score unknown.
+V21 local verification (not a match simulation)
+----------------------------------------------------------------------
+Ran 58 tests in 3.882s
+
+OK
+360 synthetic cases: max 0.80 ms, p99 0.77 ms
+
+Native:
+bot: python -u bot.py
+ready in 702 ms: name 'NEXUS-V21-adaptive'
+observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
+answer time ms: p50 0.2  p90 0.3  p99 0.5  max 1.5  (this machine, not the 1-CPU match container)
+answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
+PASS
+
+Fallback:
+bot: python -u bot.py
+ready in 703 ms: name 'NEXUS-V21-adaptive'
+observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
+answer time ms: p50 0.3  p90 0.4  p99 0.7  max 4.3  (this machine, not the 1-CPU match container)
+answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
+PASS
+
+Python compilation passed; native C rebuilt with -Wall -Wextra -Werror and matched original binary.
+0/300 recorded actions changed from V20. Docker runtime and actual competition score unverified.

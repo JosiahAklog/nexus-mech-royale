@@ -17,7 +17,7 @@ def weapon(kind):
 def enemy(o,i=1,dx=25,dy=0,hp=600):
     x,y,z=o['self']['pos'];return {'kind':'mech','id':i,'pos':[x+dx,y+dy,z],'vel':[2.,1.,0.],'hp':hp,'max_hp':1400,'cubes':1,'aim':[math.pi,0.],'weapons':['gun'],'charging':False}
 class Tests(unittest.TestCase):
-    def setUp(self):self.b=Bot(H)
+    def setUp(self):self.b=Bot(H,"adaptive")
     def validate(self,o):
         a=self.b.act(o); self.assertEqual(a['tick'],o['tick']); self.assertFalse(SCHEMA.errors(a,'Action')); self.assertLessEqual(math.hypot(*a['move']),1.000001);return a
     def test_upgrade(self):
@@ -39,7 +39,7 @@ class Tests(unittest.TestCase):
         o['self']['hp']=o['self']['max_hp']*.97;o['t']+=1;o['tick']+=20
         self.validate(o);self.assertFalse(self.b.recovering)
     def test_recorded_actions_without_wrapper_fallback(self):
-        b=Bot(H)
+        b=Bot(H,"adaptive")
         count=0
         for o in M:
             if o.get('type')!='obs':continue
