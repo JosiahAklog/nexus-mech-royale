@@ -677,6 +677,11 @@ class Bot:
                 if w.get('ammo',1)<=0 and w.get('reload',0)<=0:result['reload']=True
         for i,w in enumerate(weapons):
             if w and w['kind']=='gun' and not result['fire'][i] and w.get('reload',0)<=0 and w.get('ammo',12)<w['stats']['mag']*.72 and (not target or (recovering and not pressure and not drone_defense) or not line or (active==1-i and weapons[1-i] and weapons[1-i]['kind']=='laser' and w.get('ammo',0)<=2)):result['reload']=True
+        # Use quiet travel time to replace two or more missing rounds.
+        if not target and not obs['mechs'] and not obs['sounds'] and not obs['projectiles'] and me['in_zone'] and t - max(self.last_damage, self.last_attack) > 5:
+            for w in weapons:
+                if w and w['kind'] == 'gun' and w['reload'] == 0 and w['ammo'] <= w['stats']['mag'] - 2:
+                    result['reload'] = True
         # Goal selection. Stay in a healthy part of the zone without blindly rushing its center.
         curd=distance(p,z['center']); nextd=distance(p,z['next_center']); next_r=z['next_radius']; current_margin=z['radius']-curd; next_margin=next_r-nextd
         travel_time=max(0.,nextd-max(0,next_r-18))/max(1.,stats['walk_speed']*.72)
