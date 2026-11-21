@@ -768,6 +768,12 @@ class Bot:
                 # Close isolated weak targets; strafe rather than run straight at them.
                 if target.get('hp',1400)<300 and danger<=1 and hp>.70:ideal=min(ideal,36)
                 ex,ey=norm(target['pos'][0]-p[0],target['pos'][1]-p[1]); sign=1 if (int(t/2.7)+self.slot)%2 else -1; radial=clip((d-ideal)/16,-1,1) if line else 1
+                # Preserve sideways speed during an exposed duel. Reversing at a
+                # clock boundary briefly leaves the mech stationary in the firing lane.
+                if line and danger == 1 and 'gun' in target.get('weapons', []):
+                    lateral = ex * me['vel'][1] - ey * me['vel'][0]
+                    if abs(lateral) >= stats['walk_speed'] * .45:
+                        sign = 1 if lateral > 0 else -1
                 sx,sy=norm(ex*radial-ey*sign*.7*policy['strafe'],ey*radial+ex*sign*.7*policy['strafe']);goal=(p[0]+sx*35,p[1]+sy*35);mode='fight'
             else:
                 ideal=29 if kind=='npc' else 13; ex,ey=norm(target['pos'][0]-p[0],target['pos'][1]-p[1]);goal=(target['pos'][0]-ex*ideal,target['pos'][1]-ey*ideal);mode='farm';hold=d<ideal+3 and line and nd>75;altitude=target['pos'][2]
