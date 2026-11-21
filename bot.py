@@ -857,6 +857,13 @@ class Bot:
         else:
             risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['walk_speed']*charge_mult)
             fast_risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['boost_speed']*charge_mult) if ground_boost and projectiles else risks
+        zone_steering_margin = 12.
+        if mode == 'zone' and self.path and z['radius'] >= 18:
+            # A ground route around a building can start by turning away from
+            # the circle. Penalize exposure beyond that turn, without undoing it.
+            route_step = (p[0] + direct[0] * 12, p[1] + direct[1] * 12)
+            routed_margin = z['radius'] - distance(route_step, z['center'])
+            zone_steering_margin = min(zone_steering_margin, routed_margin)
         best_boost=False
         reloading_cover=(mode=='fight' and not recovering and near is not None and
             not any(result['fire']) and not any(w and (w['kind']!='gun' and w['cooldown']<.4 or w['kind']=='gun' and w.get('reload',0)<.35 and w.get('ammo',1)>0) for w in weapons))
@@ -881,7 +888,7 @@ class Bot:
                 if top>p[2]+stats['step_up']+.55:score-=pen
                 elif clearance<stats['radius']+1 and p[2]<ground+3:score-=pen*.35
             xx=p[0]+dx*12; yy=p[1]+dy*12; future=(xx,yy,p[2]); zm=z['radius']-distance(future,z['center']);
-            if zm<12:score-=max(0,12-zm)*(2.5 if urgency else 1.6)
+            if zm < zone_steering_margin:score-=(zone_steering_margin-zm)*(2.5 if urgency else 1.6)
             if t>=z['shrink_start'] and next_margin<25 and not hold:
                 future_margin=next_r-distance(future,z['next_center']);score-=max(0,8-future_margin)*.24
             if self.profile=='adaptive' and not hold and mode in ('fight','escape','loot','zone') and hypot(dx,dy)>.01:
