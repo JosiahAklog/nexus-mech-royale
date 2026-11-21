@@ -583,6 +583,7 @@ class Bot:
                 if old is not None:result['drop']=1
                 break
             if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
+        safe_cube_count = None
         for x in sorted(remembered_cubes,key=lambda c:distance(p,c['pos']))[:40]:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
             if d<170 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):
@@ -591,8 +592,13 @@ class Bot:
                 cluster=sum(1 for c in remembered_cubes[:160] if c['id']!=x['id'] and distance(c['pos'],x['pos'])<9 and abs(c['pos'][2]-x['pos'][2])<4)
                 # Beyond the stat cap, a lone cube grows our hitbox. Travel for it
                 # only when an upgrade is close, or the cube is already nearby.
-                if me['cubes'] >= cap and next_upgrade - me['cubes'] > 2 and cluster == 0 and d > 12:
-                    continue
+                if me['cubes'] >= cap and next_upgrade - me['cubes'] > 2 and d > 12:
+                    if cluster == 0:
+                        continue
+                    if safe_cube_count is None:
+                        safe_cube_count = sum(self.safe(c['pos'], z) for c in remembered_cubes)
+                    if safe_cube_count < next_upgrade - me['cubes']:
+                        continue
                 route_bonus=0.
                 if self.profile=='adaptive' and me['cubes']<cap and nd>75 and d<100:
                     route_bonus=min(9.,cluster*3.) if self.map.ray((p[0],p[1],p[2]+1.2),(x['pos'][0],x['pos'][1],x['pos'][2]+1.2)) else 0.
