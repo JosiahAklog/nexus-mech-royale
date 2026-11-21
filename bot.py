@@ -686,6 +686,12 @@ class Bot:
         drops=[]
         for d in obs['drops']:
             dd=distance(p,d['pos']); threatened=any(distance(e['pos'],d['pos'])<32 for e in close)
+            if d.get('holder') not in (None, me['id']) and d.get('lands_in', 0) <= 0:
+                # Even uninterrupted boosting must reach the ring before the other holder finishes.
+                remaining = max(0., d.get('capture_s', 4.) - d.get('progress', 0.))
+                reach = d['radius'] + stats['boost_speed'] * remaining
+                if dd > reach:
+                    continue
             finishing=(d.get('holder')==me['id'] and d.get('lands_in',0)<=0 and dd<d['radius']*.85 and d.get('progress',0)>=max(0,d.get('capture_s',4)-.9) and hp>.25 and not any(distance(e['pos'],d['pos'])<d['radius']+3 for e in close))
             if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240 and (finishing or self.objective_viable(p,d['pos'],me,z,t,d.get('capture_s',4),d.get('lands_in',0))):
                 drops.append((dd-(1-hp)*120-(180 if finishing else 0)-(35 if d.get('holder')==me['id'] else 0),d))
