@@ -716,6 +716,13 @@ class Bot:
                 nearby_cubes=[c for c in remembered_cubes if distance(p,c['pos'])<13 and abs(p[2]-c['pos'][2])<3 and self.safe(c['pos'],z,12)]
                 if nearby_cubes and me['cubes']<self.cfg['cubes']['stat_cap']:
                     goal=min(nearby_cubes,key=lambda c:distance(p,c['pos']))['pos'];mode='loot';altitude=goal[2]
+                elif (kinds[1] is None and lootgoal and lootgoal['id'] in visible_pickups
+                      and nd > 95 and distance(p, lootgoal['pos']) <= 30
+                      and abs(p[2] - lootgoal['pos'][2]) <= 4 and not obs['projectiles']
+                      and self.safe(lootgoal['pos'], z, 20)):
+                    goal = lootgoal['pos']
+                    mode = 'loot'
+                    altitude = goal[2]
                 else:goal=p;mode='repair';hold=True
             elif not exposed and self.last_bearing is not None and t-self.last_damage<2.0:ex,ey=-cos(self.last_bearing),-sin(self.last_bearing)
             elif near:ex,ey=norm(p[0]-near['pos'][0],p[1]-near['pos'][1])
