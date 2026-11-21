@@ -168,8 +168,8 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V36-'+self.profile
-        self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False; self.economy_boost=False; self.route_objective=None
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V37-'+self.variant if self.variant!='baseline' else self.name
+        self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
         if t.get('kind')=='npc':return self.cfg['npc']['height']*.55
@@ -191,17 +191,6 @@ class Bot:
                 if ed<25 and ed+7<d and abs(q[2]-e['pos'][2])<8:
                     cost+=max(0., min(35.,(d-ed)*.65))
         return cost
-    def early_economy(self,me):
-        return self.profile=='adaptive' and me['cubes']<6 and sum(w is not None for w in me['weapons'])<2 and me['hp']>.72*me['max_hp']
-    def acquisition_bonus(self,p,me,obj,enemies):
-        # A second weapon changes sustained damage much more than one cube.
-        # Reward ground pickups that can be reached in a few seconds, but
-        # never give a bonus to an obviously contested or expensive climb.
-        if not self.early_economy(me):return 0.
-        q=obj['pos'];d=distance(p,q);rise=q[2]-p[2]
-        if d>100 or abs(rise)>5 or any(distance(e['pos'],q)<max(18.,d*.60) for e in enemies):return 0.
-        if d>12 and not self.map.ray((p[0],p[1],p[2]+1.2),(q[0],q[1],q[2]+1.2)):return 8.
-        return 70. if obj['kind']=='laser' else 60.
     def retreat_pressure(self,exposed,p,me,t):
         # Low health does not imply a safe repair window. A close, armed pursuer
         # can reset the regeneration clock; keep fighting until cover is reached.
@@ -257,6 +246,7 @@ class Bot:
     def intercept(self,p,me,t,w):
         k=w['kind']; st=w['stats']; ts=me['stats']; pos=t['pos']; v=t.get('vel',(0,0,0)); ht=self.target_height(t); muzzle=ts['height']+.5 if k=='mortar' else ts['muzzle_height']; origin=(p[0],p[1],p[2]+muzzle)
         delay=.5/max(1.,self.cfg['match']['tick_hz']); speed=st.get('speed',1e8); gravity=st.get('gravity',0.) if k=='mortar' else 0.
+        if self.variant=='combat' and k in ('gun','mortar') and w.get('cooldown',0.)<=.12:delay=max(delay,w.get('cooldown',0.))
         flight=max(0.,(distance(p,pos)-ts['radius']-.5)/speed)
         for _ in range(6 if gravity else 3):
             fut=flight+delay; tx,ty,tz=self.predict_target(t,fut);tz+=ht
@@ -346,6 +336,34 @@ class Bot:
         if abs(delta(bearing(me['pos'],target['pos']),me['aim'][0]))>math.radians(me['stats'].get('front_arc_deg',base['front_arc_deg'])*.5):taken*=me['stats'].get('rear_mult',rear)
         return clip(dealt/max(100.,target.get('hp',1400))-taken/max(100.,me['hp']),-1.,1.)
 
+    def swept_risks(self,candidates,projectiles,p,me,speed):
+        # Split the acceleration path into 0.1 s segments. Find the closest
+        # horizontal approach on each segment, then check its vertical height.
+        # No external simulation or future observations are used.
+        if not projectiles:return [0.]*len(candidates)
+        st=me['stats']; vx0,vy0=me['vel'][:2]; accel=st['ground_accel'] if me['grounded'] else st['air_accel']; gravity=self.cfg['weapons']['mortar']['gravity']; splash=self.cfg['weapons']['mortar']['splash_radius']; out=[]
+        times=(0.,.1,.2,.3,.4,.5,.6,.7,.8)
+        for dx,dy in candidates:
+            vx,vy=dx*speed,dy*speed; ax,ay=vx-vx0,vy-vy0; turn=hypot(ax,ay)/max(.1,accel); path=[]
+            for t in times:
+                lag=(t*(1-.5*t/turn) if t<turn else .5*turn) if turn>1e-8 else 0.
+                path.append((vx*t-ax*lag,vy*t-ay*lag))
+            risk=0.
+            for q,v,k in projectiles:
+                rx,ry=q[0]-p[0],q[1]-p[1]; radius=st['radius']+(splash if k=='mortar' else 1.4)+3.; hit=0.
+                for i,t in enumerate(times[:-1]):
+                    x=rx+v[0]*t-path[i][0];y=ry+v[1]*t-path[i][1]
+                    ux=v[0]*.1-(path[i+1][0]-path[i][0]);uy=v[1]*.1-(path[i+1][1]-path[i][1]); den=ux*ux+uy*uy
+                    f=clip(-(x*ux+y*uy)/den,0.,1.) if den>1e-12 else 0.
+                    d2=(x+ux*f)**2+(y+uy*f)**2
+                    if d2>=radius*radius:continue
+                    tt=t+.1*f; z=q[2]+v[2]*tt-(.5*gravity*tt*tt if k=='mortar' else 0.)-(p[2]+st['height']*.5)
+                    if abs(z)>st['height']*.65+3:continue
+                    hit=max(hit,(radius-sqrt(d2))*4.)
+                risk+=hit
+            out.append(risk)
+        return out
+
     def objective_viable(self,p,q,me,zone,t,wait=0.,lands_in=0.):
         # Reject objectives that become unsafe before arrival and capture. The
         # next circle is guaranteed inside the current one by the protocol.
@@ -357,6 +375,22 @@ class Bot:
         center=tuple(a+(b-a)*f for a,b in zip(zone['center'],zone['next_center']))
         radius=zone['radius']+(zone['next_radius']-zone['radius'])*f
         return distance(q,center)<max(0.,radius-5.)
+
+    def drop_value(self,p,me,drop,enemies,zone,t):
+        q=drop['pos']; st=me['stats']; distance_to=distance(p,q); hp=me['hp']/max(1.,me['max_hp']); lands=max(0.,drop.get('lands_in',0.)); hold=drop.get('holder')==me['id']
+        capture=max(.1,drop.get('capture_s',4.)-(drop.get('progress',0.) if hold else 0.))
+        travel=distance_to/max(1.,st['walk_speed']*.82)
+        if distance_to>12 and not self.map.ray((p[0],p[1],p[2]+1.2),(q[0],q[1],q[2]+1.2)):travel*=1.3
+        if not self.safe(q,zone,4) or not self.objective_viable(p,q,me,zone,t,capture,lands):return None
+        if lands>travel+6:return None # avoid standing around long before the drop lands
+        for e in enemies:
+            ed=distance(e['pos'],q)
+            if ed<drop['radius']+4 and e.get('hp',1400)>me['hp']*.55:return None
+            if ed<40 and ed+10<distance_to and e.get('hp',1400)>me['hp']*.8:return None
+        if drop.get('holder') not in (None,me['id']) and lands<=0 and capture< travel+drop.get('progress',0.):return None
+        # Healing + three cubes + upgrade opportunity versus travel time.
+        value=30*(1-hp)+17*(me['cubes']<self.cfg['cubes']['stat_cap'])+7*(1-me['energy']/100.)+9
+        return value-max(travel,lands)-capture+ (15 if hold else 0.)
 
     def explore_goal(self,p,me,zone,t):
         # Online coverage map, no privileged spawn positions. Scout unvisited
@@ -386,6 +420,33 @@ class Bot:
             if distance(e['pos'],target['pos'])<75 and abs(delta(bearing(e['pos'],target['pos']),e.get('aim',[0,0])[0]))<.28 and abs(delta(bearing(e['pos'],p),e.get('aim',[0,0])[0]))>.45:rivals+=1
         weak=clip(1-target.get('hp',1400)/max(1,target.get('max_hp',1400)),0,1)
         return min(16.,rivals*8.*weak) if self.duel_value(me,target,d)>-.12 else 0.
+
+    def combat_opportunity(self,me,target,d):
+        # Score a short usable damage window using live weapons, not nominal DPS.
+        angle=abs(delta(bearing(me['pos'],target['pos']),me['aim'][0])); turn=angle/max(.1,me['stats']['turn_rate'])
+        health=max(1.,target.get('hp',1400)); values=[]
+        rear=abs(delta(bearing(target['pos'],me['pos']),target.get('aim',[0.,0.])[0]))>math.radians(self.cfg['mech']['front_arc_deg']*.5)
+        for w in me['weapons']:
+            if not w:continue
+            k=w['kind'];st=w['stats']; reach=st.get('range',st.get('speed',72)**2/max(1.,st.get('gravity',22)))
+            if d>reach*.98 or k=='mortar' and d<15:continue
+            wait=max(turn,w.get('cooldown',0.),w.get('reload',0.)); cycle=max(.1,st['cooldown']); accuracy=1.
+            if k=='gun':
+                accuracy=clip(1.-d/320,.25,.95)
+                if w.get('ammo',0)<=0:wait=max(wait,st['reload'])
+            elif k=='laser':wait+=max(0.,st['charge']-w.get('charge',0.));cycle+=st['charge'];accuracy=.83
+            elif k=='mortar':accuracy=.45 if d<90 else .25
+            if wait>=1.8:continue
+            shots=1+int((1.8-wait)/cycle)
+            if k=='gun':shots=min(shots,w.get('ammo',0) if w.get('reload',0)<=0 else st['mag'])
+            if k=='lightning':shots=min(shots,max(0,int((me['energy']-7)/max(.1,st['energy']))))
+            damage=st['damage']*shots*accuracy
+            if k=='laser' and 'mortar' in target.get('weapons',[]):damage*=1+st.get('cookoff',0.)
+            values.append(damage)
+        values.sort(reverse=True); damage=(values[0]+.6*sum(values[1:])) if values else 0.
+        damage*=1+self.cfg['cubes']['damage_per_cube']*min(me['cubes'],self.cfg['cubes']['stat_cap'])
+        if rear:damage*=self.cfg['mech']['rear_mult']
+        return clip(28*damage/health,0.,36.)-min(14.,turn*11)+ (8 if rear and damage>0 else 0.)
 
     def choose_target(self,p,me,obs,enemies,npcs,loot):
         eye=(p[0],p[1],p[2]+me['stats']['muzzle_height']); cand=[]; nearby_enemy=any(distance(p,e['pos'])<40 for e in enemies)
@@ -435,16 +496,10 @@ class Bot:
             # Reduce aim cycling toward targets beyond the usable weapon envelope.
             if kind=='mech' and not any(w and d<=w['stats'].get('range',w['stats'].get('speed',72)**2/max(1,w['stats'].get('gravity',22)))*.98 for w in me['weapons']):continue
             if kind=='mech' and me['hp']<me['max_hp']*.36:score-=25
-            if self.early_economy(me) and kind!='mech' and d<95 and line and not nearby_enemy and obs['t']-self.last_damage>3:
-                # Crates may equip us; drones yield two cubes. Favor targets
-                # that can be collected without a long detour or elevated climb.
-                rise=abs(p[2]-t['pos'][2])
-                if rise<5:score+= (26 if kind=='crate' else 18)+max(0.,1-hp/(300 if kind=='crate' else 350))*12
-            if self.early_economy(me) and kind=='mech' and d>65 and hp>me['hp']*.65 and t['id']!=self.last_attacker and abs(delta(bearing(t['pos'],p),t.get('aim',[0,0])[0]))>.55:
-                score-=22. # still fight if no more profitable target exists
             if self.profile=='adaptive' and kind=='mech' and line:
                 score+=12*self.duel_value(me,t,d)
                 score+=self.opportunity_bonus(p,me,t,enemies,obs)
+                if self.variant=='combat':score+=self.combat_opportunity(me,t,d)
             cand.append((score,t,line))
         self.target_candidates=sorted(cand,key=lambda it:it[0],reverse=True)
         if not self.target_candidates:return None,False
@@ -523,7 +578,7 @@ class Bot:
                 result['take']=x['id'];
                 if old is not None:result['drop']=1
                 break
-            if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10)-self.acquisition_bonus(p,me,x,close),x))
+            if want and d<155 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):loot.append((self.loot_cost(p,x,close,me)-(42+policy['loot'] if old is None else 10),x))
         for x in sorted(remembered_cubes,key=lambda c:distance(p,c['pos']))[:40]:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
             if d<170 and dz<36 and self.safe(x['pos'],z) and self.objective_viable(p,x['pos'],me,z,t):
@@ -533,7 +588,11 @@ class Bot:
                 route_bonus=0.
                 if self.profile=='adaptive' and me['cubes']<cap and nd>75 and d<100:
                     route_bonus=min(9.,cluster*3.) if self.map.ray((p[0],p[1],p[2]+1.2),(x['pos'][0],x['pos'][1],x['pos'][2]+1.2)) else 0.
-                loot.append((self.loot_cost(p,x,close,me)-route_bonus-69-policy['loot']+extra-min(30,cluster*10)-(12 if self.profile=='adaptive' and me['cubes']<4 and nd>90 and d<95 and hp>.75 else 0),x))
+                econ_bonus=0.
+                if self.variant=='economy' and nd>55 and not recovering and me['cubes']<cap:
+                    # Prefer a nearby multi-cube group, not a distant speculative route.
+                    econ_bonus=min(24.,cluster*8.)+ (8. if d<14 else 0.)
+                loot.append((self.loot_cost(p,x,close,me)-route_bonus-69-policy['loot']+extra-min(30,cluster*10)-(12 if self.profile=='adaptive' and me['cubes']<4 and nd>90 and d<95 and hp>.75 else 0)-econ_bonus,x))
         loot.sort(key=lambda q:q[0]); lootgoal=loot[0][1] if loot else None
         target, line=self.choose_target(p,me,obs,enemies,npcs,lootgoal)
         if recovering and pressure and (target is None or target.get('kind')!='mech'):
@@ -590,9 +649,6 @@ class Bot:
                 if weapons[active]['kind']=='lightning':
                     for gi in good:
                         if weapons[gi]['kind']=='gun' and priority(gi)>=30 and abs(delta(solutions[gi][0],solutions[active][0]))<math.radians(weapons[active]['stats']['cone_deg']*.36):active=gi;break
-                if self.profile=='adaptive' and not recovering and not emergency_zone:
-                    charged=[i for i in good if weapons[i]['kind']=='laser' and weapons[i].get('charge',0)>=weapons[i]['stats']['min_charge'] and weapons[i]['cooldown']<=.11]
-                    if charged and priority(active)<100:active=charged[0]
                 aim=list(solutions[active][:2])
                 for i,s in solutions.items():
                     w=weapons[i]; k=w['kind']; st=w['stats']; charge=w.get('charge',0); same=(abs(delta(s[0],aim[0]))<=math.radians(st['cone_deg']*.42) if k=='lightning' else abs(delta(s[0],aim[0]))<s[5]+.018 and abs(s[1]-aim[1])<s[6]+.018)
@@ -601,11 +657,8 @@ class Bot:
                             fraction=st['min_frac']+(1-st['min_frac'])*min(1.,charge/max(.01,st['charge']))
                             damage=st['damage']*fraction*(1+self.cfg['cubes']['damage_per_cube']*min(me['cubes'],self.cfg['cubes']['stat_cap']))
                             if 'mortar' in target.get('weapons',[]):damage*=1+st.get('cookoff',0.)
-                            lethal=charge>=st.get('min_charge',.15) and damage*(1. if target.get('kind','crate')=='crate' else .82)>=target.get('hp',1e9)
-                            charge_target=st['charge']-.06
-                            if target.get('kind','crate')=='crate' and damage<target.get('hp',300) <= st['damage']*(1+self.cfg['cubes']['damage_per_cube']*min(me['cubes'],self.cfg['cubes']['stat_cap'])):
-                                charge_target=min(st['charge']-.001,st['charge']*clip((target['hp']/(st['damage']*(1+self.cfg['cubes']['damage_per_cube']*min(me['cubes'],self.cfg['cubes']['stat_cap'])))-st['min_frac'])/(1-st['min_frac']),0.,1.))
-                            result['fire'][i]=bool((not recovering or pressure and self.profile!='survivor' and nd>28 and hp>.28) and s[2] and ((charge<charge_target and not lethal) or not (s[3] and same)) and charge<st['charge']+.6)
+                            lethal=charge>=st.get('min_charge',.15) and damage*.82>=target.get('hp',1e9)
+                            result['fire'][i]=bool((not recovering or pressure and self.profile!='survivor' and nd>28 and hp>.28) and s[2] and ((charge<st['charge']-.06 and not lethal) or not (s[3] and same)) and charge<st['charge']+.6)
                         else:result['fire'][i]=bool(s[2] and same and w['cooldown']<=.08 and (not recovering or pressure and self.profile!='survivor' and nd>28 and hp>.28) and (active==i) and abs(delta(s[0],me['aim'][0]))<.65 and abs(s[1]-me['aim'][1])<.55)
                     elif s[2] and same and s[3] and (not recovering or target.get('kind')=='mech' and pressure or drone_defense):
                         result['fire'][i]=bool(k!='lightning' or energy>=st.get('energy',3)+policy['reserve']+(8 if self.profile=='adaptive' and (recovering or emergency_zone) and target.get('hp',1000)>st.get('damage',0) else 0))
@@ -632,7 +685,15 @@ class Bot:
             finishing=(d.get('holder')==me['id'] and d.get('lands_in',0)<=0 and dd<d['radius']*.85 and d.get('progress',0)>=max(0,d.get('capture_s',4)-.9) and hp>.25 and not any(distance(e['pos'],d['pos'])<d['radius']+3 for e in close))
             if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240 and (finishing or self.objective_viable(p,d['pos'],me,z,t,d.get('capture_s',4),d.get('lands_in',0))):
                 drops.append((dd-(1-hp)*120-(180 if finishing else 0)-(35 if d.get('holder')==me['id'] else 0),d))
-        if drops and (hp<.98 or me['cubes']<15) and not urgency:
+        if self.variant=='economy' and not urgency and not recovering:
+            viable=[(self.drop_value(p,me,d,enemies,z,t),d) for d in obs['drops']]
+            viable=[(v,d) for v,d in viable if v is not None and v>8.]
+            if viable:
+                d=max(viable,key=lambda pair:pair[0])[1]
+                # Treat an attractive drop as a high-value objective even before
+                # landing, but never extend the baseline's capture ring.
+                drops=[(-1000.,d)]+drops
+        if drops and (hp<.98 or me['cubes']<15 or self.variant=='economy' and energy<55) and not urgency:
             d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';altitude=goal[2];capture_radius=d['radius'];hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<4
         if goal is None and urgency:
             if hp<.78 and target and target.get('kind')!='mech':result['fire']=[False,False]
@@ -695,6 +756,10 @@ class Bot:
                 if self.profile=='adaptive' and obs.get('alive',16)<=5 and danger>=2 and hp<.85:ideal+=8
                 if 'lightning' in kinds and 'laser' in target.get('weapons',[]) and danger<=1 and hp>.62:ideal=32
                 if 'laser' in kinds and 'mortar' in target.get('weapons',[]):ideal=85
+                if self.variant=='combat' and danger<=1 and hp>.72 and line:
+                    if target.get('hp',1400)<me['hp']*.65 or self.duel_value(me,target,d)>.20:
+                        if 'laser' not in kinds and 'mortar' not in kinds:ideal=max(23.,ideal-10.)
+                        elif 'laser' in kinds:ideal=max(55.,ideal-8.)
                 if hp<.72:ideal+=10
                 if self.profile=='adaptive' and line and danger<=1:
                     advantage=self.duel_value(me,target,d)
@@ -721,7 +786,7 @@ class Bot:
             goal=self.goal_memory;mode='patrol'
         if not recovering or mode!='escape':self.roof_goal=None
         # Boundary correction on any non-zone goal.
-        gx,gy=goal[:2]; center=z['center']; ux,uy=norm(gx-center[0],gy-center[1]); gd=distance(goal,center); rr=max(0,z['radius']-(4 if mode in ('loot','drop') and not urgency else 12))
+        gx,gy=goal[:2]; center=z['center']; ux,uy=norm(gx-center[0],gy-center[1]); gd=distance(goal,center); rr=max(0,z['radius']-12)
         if gd>rr:gx=center[0]+ux*rr;gy=center[1]+uy*rr
         b=self.map.bounds;gx=clip(gx,b['minX']+8,b['maxX']-8);gy=clip(gy,b['minY']+8,b['maxY']-8);goal=(gx,gy)
         if mode=='zone' and distance(p,goal)<(.2 if z['radius']<6 else 2.0):hold=True
@@ -730,10 +795,8 @@ class Bot:
         # Ground route when needed; local steering handles combat, roofs, and moving threats.
         direct=norm(gx-p[0],gy-p[1]); route_needed=mode in ('zone','loot','drop','patrol','farm','escape') and not hold and distance(p,goal)>13 and (altitude is None or altitude<p[2]+5)
         if route_needed and self.map.ray((p[0],p[1],p[2]+1.1),(gx,gy,self.map.ground(gx,gy)+1.1)) and distance(p,goal)<75:route_needed=False
-        objective_key=(mode,lootgoal['id'] if mode=='loot' and lootgoal else target['id'] if mode=='farm' and target else None)
-        changed_objective=objective_key!=self.route_objective; self.route_objective=objective_key
         if route_needed:
-            if changed_objective or self.route_goal is None or distance(goal,self.route_goal)>20 or t-self.route_time>2.0 or not self.path or self.stuck>.6 and t-self.route_time>.5:
+            if self.route_goal is None or distance(goal,self.route_goal)>20 or t-self.route_time>2.0 or not self.path or self.stuck>.6 and t-self.route_time>.5:
                 self.route_goal=goal;self.route_time=t;self.path=self.map.route(p,goal)
             # Don't discard a waypoint around a corner just because it is
             # nearby. Skip ahead only when the next segment is unobstructed.
@@ -752,6 +815,8 @@ class Bot:
             if dd<165 and (obj['kind']=='mortar' or (q[0]-p[0])*v[0]+(q[1]-p[1])*v[1]<dd*stats['boost_speed']):projectiles.append((dd,q,v,obj['kind']))
         projectiles=[(q,v,k) for _,q,v,k in sorted(projectiles,key=lambda item:item[0])[:32]]
         candidates=[direct]+DIR
+        if self.variant=='movement' and projectiles and not hold:
+            candidates=candidates+[(cos((i+.5)*pi/8),sin((i+.5)*pi/8)) for i in range(16)]
         if hold:candidates=[(0.,0.)]+candidates
         best=None;bestscore=-1e12
         # Plan with the speed that the movement mode is likely to use. For ground
@@ -766,18 +831,24 @@ class Bot:
             or mode=='farm' and not recovering and nd>90 and gd>35 and energy>(78 if self.profile=='adaptive' and me['cubes']<4 and hp>.8 else 85) and me['cubes']<6
             or mode=='fight' and danger and ((nd<27 and energy>52 and 'lightning' not in kinds) or (self.profile=='aggressive' and nd>35 and nd<85 and energy>62 and 'lightning' in kinds and hp>.65))
             or mode=='patrol' and energy>90 and gd>70)
-        economy_trip=(self.early_economy(me) and not recovering and nd>80 and t-self.last_damage>3.5 and mode in ('patrol','farm','loot') and gd>22 and me['grounded'] and not hold)
-        if not economy_trip:self.economy_boost=False
-        elif energy>=78:self.economy_boost=True
-        elif energy<=37:self.economy_boost=False
-        if economy_trip and self.economy_boost:ground_boost=True
         if mode!='escape' or emergency_zone:self.escape_recharge=False
         elif energy<24:self.escape_recharge=True
         elif energy>=55:self.escape_recharge=False
         if self.escape_recharge and mode=='escape' and nd>28:ground_boost=False
         charge_mult=stats.get('charge_move_mult',.5) if any(w and w['kind']=='laser' and result['fire'][i] for i,w in enumerate(weapons)) else 1.
-        risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['walk_speed']*charge_mult)
-        fast_risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['boost_speed']*charge_mult) if ground_boost and projectiles else risks
+        if self.variant=='movement' and projectiles:
+            # Cap the expensive fine search; closest threats first. For the
+            # remainder use the existing native/Python risk estimate.
+            primary=projectiles[:12]; rest=projectiles[12:]
+            def risk_at(speed):
+                fine=self.swept_risks(candidates,primary,p,me,speed)
+                coarse=self.map.projectile_risks(candidates,rest,p,me,gravity,splash,speed)
+                return [a+b for a,b in zip(fine,coarse)]
+            risks=risk_at(stats['walk_speed']*charge_mult)
+            fast_risks=risk_at(stats['boost_speed']*charge_mult) if ground_boost else risks
+        else:
+            risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['walk_speed']*charge_mult)
+            fast_risks=self.map.projectile_risks(candidates,projectiles,p,me,gravity,splash,stats['boost_speed']*charge_mult) if ground_boost and projectiles else risks
         best_boost=False
         reloading_cover=(mode=='fight' and not recovering and near is not None and
             not any(result['fire']) and not any(w and (w['kind']!='gun' and w['cooldown']<.4 or w['kind']=='gun' and w.get('reload',0)<.35 and w.get('ammo',1)>0) for w in weapons))
@@ -851,8 +922,7 @@ class Bot:
             score-=(fast_risk if use_boost else risk)*policy['risk']
             if score>bestscore:bestscore=score;best=(dx,dy);best_boost=use_boost
         move=best or direct; jump=False;boost=False
-        evasive=bool(projectiles and max(risks)>10. and min(risks)+4.<max(risks))
-        if mode in ('zone','loot','drop') and not hold and distance(p,goal)<8 and self.stuck<.5 and (not evasive or mode=='zone' and z['radius']<18):
+        if mode in ('zone','loot','drop') and not hold and distance(p,goal)<8 and self.stuck<.5 and not (self.variant=='movement' and projectiles and min(risks)>0. and z['radius']>=18):
             # Slow near a target. In the final tiny circle, directly control the
             # desired velocity to settle at the center instead of orbiting it.
             if mode=='zone' and z['radius']<18:
@@ -888,4 +958,7 @@ class Bot:
         result.update(move=list(move),boost=bool(boost),jump=bool(jump),aim=[float(delta(aim[0],0)),float(clip(aim[1],stats['min_pitch'],stats['max_pitch']))]);self.last_move=move;self.last_mode=mode
         return result
 
-if __name__=='__main__':mf.run(Bot)
+class Candidate(Bot):
+    variant='movement'
+
+if __name__=='__main__':mf.run(Candidate)
