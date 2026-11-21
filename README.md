@@ -1,24 +1,18 @@
-# NEXUS V28.1 — audited tactical candidate
+# NEXUS V35 — Persistent Threat Awareness
 
-Based on V27 locally; V26 (4.83) is the latest user-confirmed competitive result. V27 has no reported score. V28 is an experimental candidate targeting improved placement, not a certified 6.95 score.
+Built from the exact V34 complete ZIP. Confirmed competitive best reported by the user: V28.1, 4.96. The V34 prediction of 5.72 is hypothetical, not measured. Target: 6.00+.
 
-## Changes
-- Two-second combat budget accounts for partially compatible second weapons, gun reloads, laser charge, lightning energy, range-dependent estimated accuracy, armor and rear exposure.
-- Recent damage burst can trigger earlier retreat against dangerous opponents; movement favors lateral evasion while under fire.
-- Future-zone feasibility filters risky distant weapons, cubes and supply drops.
-- Online patrol coverage favors recently unvisited, walkable, visible ground when no immediate goal is available and cube count is below 10.
-- Retreat energy recharge hysteresis prevents repeated short boosts when reserves are low, except against close threats or in a zone emergency.
-- Recent unseen damage bearing guides escape; slightly longer quiet interval before standing still for repair.
+## Changes from V34
+- Track recent attackers independently for twelve seconds, so zone damage or another attacker does not immediately erase a known ranged threat.
+- Continue avoiding a recently damaging, exposed long-range shooter during repairs, and react to visible aimed charging lasers even when no recent attack is recorded. Allow repairs once terrain blocks the threat.
+- Prefer moving away from an exposed attacker rather than a nearby opponent behind cover.
+- Face the ranged threat when retreating without firing or releasing a charged laser, reducing potential rear-armor exposure.
+- Account for part of the actual healing duration when choosing future-safe escape cover.
+- Clear stale altitude targets when final-zone centering overrides the earlier objective.
 
-All decisions use current protocol observations, remembered observations, and the supplied public map. V27's core targeting, projectile avoidance, runtime dependencies and Dockerfile are retained.
-
-## V28.1 audit corrections
-- Use the configured rear-armor multiplier and front arc on both sides of the combat estimate.
-- Calculate supply-drop completion as max(travel time, time to landing) plus capture time, instead of combining landing and capture as a single maximum.
-- Four additional regression tests; no broad tuning of V28 strategies.
-
-## Validation
-Run `python -m unittest discover -q` and `python check/check.py -- python -u bot.py` from the complete package. See CHECK_RESULTS.txt. The checker plays recorded observations and does not simulate battle outcomes. Docker runtime and actual standings were not tested here. Keep the highest-scoring prior commit available and compare the official score for this candidate separately.
+All earlier resource, energy, targeting, navigation and native acceleration routines are retained except for these specific changes. No interactive match simulator was available. The fixed replay only validates protocol and illustrates decisions; it cannot determine placement improvements.
 
 ## Upload
-If V28 is already present in GitHub, upload the four files in the V28.1 Audit Update ZIP to the root and commit them. Otherwise use the complete ZIP, preserving `arena/v2/` and `check/` folders. Submit the new commit to the competition, without replacing the best final entry until a better official score is returned.
+If V34 is already uploaded, extract the four-file V35 update and upload to the repository root. Otherwise use the complete ZIP, preserving arena/v2 and check. Keep the highest confirmed entry selected until a better official result is available.
+
+See CHECK_RESULTS.txt for local verification.

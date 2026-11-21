@@ -1,25 +1,25 @@
-V28.1 audit (local environment)
+NEXUS V35 — local verification, not competitive scoring
 
 ----------------------------------------------------------------------
-Ran 72 tests in 4.430s
+Ran 118 tests in 7.476s
 
 OK
-360 synthetic cases: max 0.91 ms, p99 0.87 ms
+360 synthetic cases: max 1.20 ms, p99 1.04 ms
 
-Native enabled:
 bot: python -u bot.py
-ready in 760 ms: name 'NEXUS-V28.1-adaptive'
-observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.3  p90 0.4  p99 0.8  max 2.6  (this machine, not the 1-CPU match container)
-answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
-PASS
-
-Native disabled:
-bot: python -u bot.py
-ready in 692 ms: name 'NEXUS-V28.1-adaptive'
+ready in 690 ms: name 'NEXUS-V35-adaptive'
 observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
 answer time ms: p50 0.3  p90 0.5  p99 0.7  max 0.8  (this machine, not the 1-CPU match container)
 answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
 PASS
 
-All shipped Python files compile. C source compiled with -Wall -Wextra. V27 support assets unchanged byte-for-byte. Docker unavailable. No interactive battle simulation or competitive score verified.
+Python-only fallback protocol:
+bot: python -u bot.py
+ready in 668 ms: name 'NEXUS-V35-adaptive'
+observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
+answer time ms: p50 0.4  p90 0.8  p99 1.0  max 1.2  (this machine, not the 1-CPU match container)
+answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
+PASS
+
+V34 fixed-replay comparison: 33/300 changed observations, all aim fields; first change at t=7.9 s. No movement or fire changes on this fixed replay. Python compilation passed. Docker engine and interactive match simulator unavailable.
+Unchanged package members: 28/31; 4 changed or new files.
