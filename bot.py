@@ -832,13 +832,23 @@ class Bot:
         # into a predicted collision. Air boosting changes altitude, not walk speed.
         gravity=self.cfg['weapons']['mortar']['gravity']; splash=self.cfg['weapons']['mortar']['splash_radius']
         gd=distance(p,goal)
+        # Use a small opening energy surplus to uncover the first resources
+        # sooner when the way is clear and there is no sign of nearby activity.
+        opening_scout = (
+            mode == 'patrol' and t < 2 and me['cubes'] == 0 and kinds[1] is None
+            and hp > .95 and gd > 45 and not route_needed and t - self.last_damage > 4
+            and not enemies and not npcs and not projectiles
+            and not any(sound.get('dist') != 'far' for sound in obs.get('sounds', []))
+            and energy > (82 if self.boosting else 97)
+        )
         ground_boost=me['grounded'] and not hold and (
             mode in ('escape','zone') and gd>12 and (energy>32 or self.boosting and energy>12)
             or mode=='loot' and gd>20 and (energy>(55 if nd>75 and me['cubes']<10 else 70) or self.boosting and energy>32)
             or mode=='drop' and gd>18 and (energy>45 or self.boosting and energy>25)
             or mode=='farm' and not recovering and nd>90 and gd>35 and energy>(78 if self.profile=='adaptive' and me['cubes']<4 and hp>.8 else 85) and me['cubes']<6
             or mode=='fight' and danger and ((nd<27 and energy>52 and 'lightning' not in kinds) or (self.profile=='aggressive' and nd>35 and nd<85 and energy>62 and 'lightning' in kinds and hp>.65))
-            or mode=='patrol' and energy>90 and gd>70)
+            or mode=='patrol' and energy>90 and gd>70
+            or opening_scout)
         if mode!='escape' or emergency_zone:self.escape_recharge=False
         elif energy<24:self.escape_recharge=True
         elif energy>=55:self.escape_recharge=False
