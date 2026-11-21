@@ -860,8 +860,20 @@ class Bot:
         best_boost=False
         reloading_cover=(mode=='fight' and not recovering and near is not None and
             not any(result['fire']) and not any(w and (w['kind']!='gun' and w['cooldown']<.4 or w['kind']=='gun' and w.get('reload',0)<.35 and w.get('ammo',1)>0) for w in weapons))
+        ranged_attacker_yaw = None
+        if mode == 'escape' and not close and t - self.last_damage < 2.0:
+            for enemy in enemies:
+                if enemy['id'] != self.last_attacker or not {'gun', 'laser'}.intersection(enemy.get('weapons', [])):
+                    continue
+                ep = enemy['pos']
+                yaw = enemy['aim'][0]
+                if abs(delta(bearing(ep, p), yaw)) < .15 and self.map.ray(eye, (*ep[:2], ep[2] + self.target_height(enemy))):
+                    ranged_attacker_yaw = yaw
+                break
         for (dx,dy),risk,fast_risk in zip(candidates,risks,fast_risks):
             score=0 if hold else 14*(dx*direct[0]+dy*direct[1]); score+=2*(dx*self.last_move[0]+dy*self.last_move[1]);
+            if ranged_attacker_yaw is not None:
+                score += 14 * abs(dx * sin(ranged_attacker_yaw) - dy * cos(ranged_attacker_yaw))
             if hold:score-=hypot(dx,dy)*(20 if mode=='repair' else 12)
             if hold and mode=='drop' and hypot(dx,dy)>.01:
                 # Do not accidentally leave a nearly captured healing drop.
