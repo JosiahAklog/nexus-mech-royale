@@ -213,7 +213,7 @@ class Tests(unittest.TestCase):
         o['mechs']=[{'id':104,'kind':'npc','pos':[p[0]+25,p[1],p[2]],'hp':150,'max_hp':350,'vel':[0.,0.,0.],'aim':[math.pi,0.]}]
         o['events']=[{'type':'damaged','weapon':'npc','by':104,'amount':25,'bearing':0.}]
         self.b.map.ray=lambda a,b:True;self.b.intercept=lambda *args:(0.,0.,True,True,25.,.04,.04)
-        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertTrue(a['fire'][0]);self.assertEqual(self.b.last_mode,'repair')
+        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertTrue(a['fire'][0]);self.assertEqual(self.b.last_mode,'farm');self.assertGreater(math.hypot(*a['move']),.1)
         o['t']+=.1;o['tick']+=2;o['events']=[];o['mechs']=[]
         self.assertFalse(any(self.validate(o)['fire']))
     def test_long_range_targeting_uses_weapon_stats(self):

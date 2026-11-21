@@ -46,4 +46,5 @@ Default policy remains adaptive. If the highest-ranked target has no viable pred
 ## V19 changes
 The default remains adaptive. New changes: aim at a reachable portion of the target when its midpoint falls outside pitch limits; orbit NPCs at about 29 m rather than holding still at close range; favor a ready gun over starting a laser charge in a close, multi-opponent fight when mobility matters; allow proactive gun reloads in either slot. Added four regression tests. The bot announces NEXUS-V19-adaptive at startup. The native helper and Dockerfile remain unchanged. No official match score for V19; no local Docker execution. Use a distinct submitted commit SHA for each variant and compare the individual scores. V9's 4.33 is the last confirmed best score supplied by the user.
 
-V23: survival-biased adaptive variant based on V21. Earlier retreat, stronger cover and projectile avoidance, greater distance from lightning, earlier zone positioning. Competitive score unmeasured.
+## V24
+Preserves V21 policy; fixes drone recovery movement, zone-damage tracking and supply capture positioning. Score unverified.

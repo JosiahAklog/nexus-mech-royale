@@ -9,7 +9,7 @@ PROFILE='adaptive'
 POLICIES={
  'aggressive': dict(retreat=.45, heal=.84, quiet=.65, escape=1.0, farm=10, loot=12, reserve=3, cover=9, risk=1.05, strafe=1.1),
  'survivor': dict(retreat=.76, heal=.96, quiet=.87, escape=2.1, farm=14, loot=22, reserve=17, cover=19, risk=1.7, strafe=.9),
- 'adaptive': dict(retreat=.68, heal=.94, quiet=.84, escape=1.8, farm=21, loot=18, reserve=12, cover=17, risk=1.55, strafe=1.0),
+ 'adaptive': dict(retreat=.60, heal=.91, quiet=.79, escape=1.55, farm=21, loot=18, reserve=7, cover=14, risk=1.35, strafe=1.0),
 }
 
 def clip(v,a,b): return max(a,min(b,v))
@@ -168,7 +168,7 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V23-'+self.profile
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V24-'+self.profile
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
@@ -350,6 +350,7 @@ class Bot:
         self.last_pos=p[:]
         for e in obs['events']:
             if e['type']=='damaged' and e.get('weapon')!='zone':self.last_damage=t;self.last_bearing=e.get('bearing');self.last_attacker=e.get('by')
+            if e['type']=='damaged' and e.get('weapon')=='zone':self.last_damage=t;self.last_attacker=None
             if e['type']=='hit':self.last_attack=t
         if self.last_hp is not None and me['hp']<self.last_hp-.5 and not me['in_zone']:self.last_damage=t
         self.last_hp=me['hp']; self.update_motion(obs)
@@ -358,7 +359,7 @@ class Bot:
         # Adapt retreat to pressure and the ability to finish a duel.
         policy=self.policy; retreat=policy['retreat']; recovery_goal=policy['heal']
         if self.profile=='adaptive':
-            retreat=clip(retreat+(.10 if danger>=2 else 0.)-(.09 if near and near.get('hp',1400)<me['hp']*.45 and danger==1 else 0.),.46,.82)
+            retreat=clip(retreat+(.10 if danger>=2 else 0.)-(.09 if near and near.get('hp',1400)<me['hp']*.45 and danger==1 else 0.),.46,.76)
         if hp<retreat and (danger>=1 or t-self.last_damage<6) or hp<min(.50,retreat):
             if not self.recovering:self.recovery_since=t
             self.recovering=True
@@ -502,7 +503,7 @@ class Bot:
         curd=distance(p,z['center']); nextd=distance(p,z['next_center']); next_r=z['next_radius']; current_margin=z['radius']-curd; next_margin=next_r-nextd
         travel_time=max(0.,nextd-max(0,next_r-18))/max(1.,stats['walk_speed']*.72)
         urgency=(current_margin<18 or t+travel_time+10>z['shrink_end'] and next_margin<10 or next_r<30 and next_margin<6)
-        goal=None; mode='patrol'; hold=False; altitude=None
+        goal=None; mode='patrol'; hold=False; altitude=None; capture_radius=8.
         # Uncontested drops are powerful healing and upgrade opportunities.
         drops=[]
         for d in obs['drops']:
@@ -511,14 +512,19 @@ class Bot:
             if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240:
                 drops.append((dd-(1-hp)*120-(180 if finishing else 0)-(35 if d.get('holder')==me['id'] else 0),d))
         if drops and (hp<.98 or me['cubes']<15) and not urgency:
-            d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';altitude=goal[2];hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<7
+            d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';altitude=goal[2];capture_radius=d['radius'];hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<4
         if goal is None and urgency:
             if hp<.78 and target and target.get('kind')!='mech':result['fire']=[False,False]
             ux,uy=norm(p[0]-z['next_center'][0],p[1]-z['next_center'][1]); r=max(0,next_r-min(42,max(12,next_r*.35)));goal=(z['next_center'][0]+ux*r,z['next_center'][1]+uy*r);mode='zone'
         if goal is None and recovering:
             # If hidden and safe, stop spending energy and let HP restore rather than wandering into combat.
             if drone_defense and current_margin>25:
-                goal=p;mode='repair';hold=True
+                # Keep the proven recovery policy, but avoid standing still under drone fire.
+                ex,ey=norm(drone['pos'][0]-p[0],drone['pos'][1]-p[1])
+                sign=1 if (int(t/3.8)+self.slot)%2 else -1
+                radial=clip((distance(p,drone['pos'])-29)/14,-1.,1.)
+                sx,sy=norm(ex*radial-ey*sign*.74,ey*radial+ex*sign*.74)
+                goal=(p[0]+sx*20,p[1]+sy*20);mode='farm';hold=False
             elif not exposed and drone is None and nd>30 and t-self.last_damage>1.1 and current_margin>25:
                 self.roof_goal=None
                 nearby_cubes=[c for c in remembered_cubes if distance(p,c['pos'])<13 and abs(p[2]-c['pos'][2])<3 and self.safe(c['pos'],z,12)]
@@ -567,7 +573,6 @@ class Bot:
                 if 'lightning' in kinds and 'laser' in target.get('weapons',[]) and danger<=1 and hp>.62:ideal=32
                 if 'laser' in kinds and 'mortar' in target.get('weapons',[]):ideal=85
                 if hp<.72:ideal+=10
-                if self.profile=='adaptive' and 'lightning' in target.get('weapons',[]) and 'lightning' not in kinds:ideal=max(ideal,65)
                 # Close isolated weak targets; strafe rather than run straight at them.
                 if target.get('hp',1400)<300 and danger<=1 and hp>.70:ideal=min(ideal,36)
                 ex,ey=norm(target['pos'][0]-p[0],target['pos'][1]-p[1]); sign=1 if (int(t/2.7)+self.slot)%2 else -1; radial=clip((d-ideal)/16,-1,1) if line else 1
@@ -627,7 +632,7 @@ class Bot:
             mode in ('escape','zone') and gd>12 and (energy>32 or self.boosting and energy>12)
             or mode=='loot' and gd>20 and (energy>(55 if nd>75 and me['cubes']<10 else 70) or self.boosting and energy>32)
             or mode=='drop' and gd>18 and (energy>45 or self.boosting and energy>25)
-            or mode=='farm' and nd>90 and gd>35 and energy>85 and me['cubes']<6
+            or mode=='farm' and not recovering and nd>90 and gd>35 and energy>85 and me['cubes']<6
             or mode=='fight' and danger and ((nd<27 and energy>52 and 'lightning' not in kinds) or (self.profile=='aggressive' and nd>35 and nd<85 and energy>62 and 'lightning' in kinds and hp>.65))
             or mode=='patrol' and energy>90 and gd>70)
         charge_mult=stats.get('charge_move_mult',.5) if any(w and w['kind']=='laser' and result['fire'][i] for i,w in enumerate(weapons)) else 1.
@@ -639,6 +644,10 @@ class Bot:
         for (dx,dy),risk,fast_risk in zip(candidates,risks,fast_risks):
             score=0 if hold else 14*(dx*direct[0]+dy*direct[1]); score+=2*(dx*self.last_move[0]+dy*self.last_move[1]);
             if hold:score-=hypot(dx,dy)*(20 if mode=='repair' else 12)
+            if hold and mode=='drop' and hypot(dx,dy)>.01:
+                # Do not accidentally leave a nearly captured healing drop.
+                q=(p[0]+dx*stats['walk_speed']*.35,p[1]+dy*stats['walk_speed']*.35)
+                if distance(q,goal)>capture_radius-.5:score-=18
             if mode=='fight' and near and near.get('charging'):
                 ang=bearing(near['pos'],p); eyaw=near.get('aim',[0,0])[0]
                 if abs(delta(ang,eyaw))<.35:score+=8*abs(dx*sin(eyaw)-dy*cos(eyaw))
@@ -649,7 +658,7 @@ class Bot:
                 elif clearance<stats['radius']+1 and p[2]<ground+3:score-=pen*.35
             xx=p[0]+dx*12; yy=p[1]+dy*12; future=(xx,yy,p[2]); zm=z['radius']-distance(future,z['center']);
             if zm<12:score-=max(0,12-zm)*(2.5 if urgency else 1.6)
-            if t+travel_time+20>=z['shrink_end'] and next_margin<25 and not hold:
+            if t>=z['shrink_start'] and next_margin<25 and not hold:
                 future_margin=next_r-distance(future,z['next_center']);score-=max(0,8-future_margin)*.24
             if near:
                 # Anticipate future exposure to a foe's current aim and favour
