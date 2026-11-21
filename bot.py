@@ -484,6 +484,10 @@ class Bot:
             if kind!='mech' and me['cubes']<10 and d<90:score+=45 if kind=='crate' else 34
             if kind!='mech' and nearby_enemy:score-=75
             if kind=='crate' and me['cubes']<10 and not nearby_enemy:score+=28
+            # A crate can fill an empty weapon slot. Favor it over drones only
+            # while healthy and outside immediate enemy pressure.
+            if kind == 'crate' and None in me['weapons'] and not nearby_enemy and line and d <= 65 and me['hp'] >= .75 * me['max_hp']:
+                score += 36 * self.cfg['loot']['crate_weapon_chance']
             if kind=='mech' and hp<220 and line:score+=42
             if self.profile=='adaptive' and kind=='mech' and line and hp<160 and d<55:score+=18
             if kind=='mech' and not line:score-=45
