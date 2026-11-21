@@ -665,6 +665,13 @@ class Bot:
                             fraction=st['min_frac']+(1-st['min_frac'])*min(1.,charge/max(.01,st['charge']))
                             damage=st['damage']*fraction*(1+self.cfg['cubes']['damage_per_cube']*min(me['cubes'],self.cfg['cubes']['stat_cap']))
                             if 'mortar' in target.get('weapons',[]):damage*=1+st.get('cookoff',0.)
+                            if target.get('kind') == 'mech' and target.get('aim'):
+                                incoming = bearing(target['pos'], p)
+                                rear_angle = abs(delta(incoming, target['aim'][0]))
+                                # Require enough margin for one observation interval of turning.
+                                margin = self.cfg['mech']['turn_rate'] * self.cfg['match']['decide_every'] / self.cfg['match']['tick_hz']
+                                if rear_angle > math.radians(self.cfg['mech']['front_arc_deg'] / 2) + margin:
+                                    damage *= self.cfg['mech']['rear_mult']
                             lethal=charge>=st.get('min_charge',.15) and damage*.82>=target.get('hp',1e9)
                             result['fire'][i]=bool((not recovering or pressure and self.profile!='survivor' and nd>28 and hp>.28) and s[2] and ((charge<st['charge']-.06 and not lethal) or not (s[3] and same)) and charge<st['charge']+.6)
                         else:result['fire'][i]=bool(s[2] and same and w['cooldown']<=.08 and (not recovering or pressure and self.profile!='survivor' and nd>28 and hp>.28) and (active==i) and abs(delta(s[0],me['aim'][0]))<.65 and abs(s[1]-me['aim'][1])<.55)
