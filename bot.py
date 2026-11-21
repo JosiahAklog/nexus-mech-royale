@@ -168,7 +168,7 @@ class Map:
 class Bot:
     name='NEXUS-experiment'
     def __init__(self,hello,profile=None):
-        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V37-'+self.variant if self.variant!='baseline' else self.name
+        self.profile=profile or PROFILE; self.policy=POLICIES[self.profile]; self.name='NEXUS-V28.1-'+self.profile; self.variant=getattr(type(self),'variant','baseline'); self.name='NEXUS-V39-zone-'+self.variant if self.variant!='baseline' else self.name
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None; self.motion={}; self.last_attacker=None; self.roof_goal=None; self.roof_until=-1.; self.last_mode=None; self.damage_recent=[]; self.visited={}; self.explore_at=-100.; self.escape_recharge=False
     def target_height(self,t):
         if t.get('kind')=='mech':return self.cfg['mech']['height']*(1+self.cfg['cubes']['size_per_cube']*t.get('cubes',0))*.52
@@ -664,9 +664,23 @@ class Bot:
                         result['fire'][i]=bool(k!='lightning' or energy>=st.get('energy',3)+policy['reserve']+(8 if self.profile=='adaptive' and (recovering or emergency_zone) and target.get('hp',1000)>st.get('damage',0) else 0))
             else:aim=[bearing(p,target['pos']),0.]
         if recovering and not pressure and not drone_defense:result['fire']=[False,False]
-        if emergency_zone:
-            for i,w in enumerate(weapons):
-                if w and w['kind']=='laser':result['fire'][i]=False
+        if emergency_zone and 'laser' in kinds:
+            slot = kinds.index('laser')
+            laser = weapons[slot]
+            # A fixed 12 m buffer otherwise disables the laser even at the
+            # center of the last circle. Check the circle through release.
+            remaining = max(0.0, laser['stats']['charge'] - laser.get('charge', 0.0)) + 0.1
+            start = max(t, z['shrink_start'])
+            fraction = clip((t + remaining - start) / max(0.001, z['shrink_end'] - start), 0.0, 1.0)
+            center = [here + fraction * (there - here)
+                      for here, there in zip(z['center'], z['next_center'])]
+            radius = z['radius'] + fraction * (z['next_radius'] - z['radius'])
+            drift = hypot(*me['vel'][:2]) * remaining
+            safe_shot = (me['in_zone'] and target and target.get('kind') == 'mech'
+                         and zone_margin > 1.0 and z['radius'] <= 25.0
+                         and distance(p, center) + drift + 1.0 < radius)
+            if not safe_shot:
+                result['fire'][slot] = False
         for i,w in enumerate(weapons):
             if w and w['kind']=='gun' and (w.get('ammo',1)<=0 or w.get('reload',0)>0):
                 result['fire'][i]=False
