@@ -670,6 +670,15 @@ class Bot:
                         else:result['fire'][i]=bool(s[2] and same and w['cooldown']<=.08 and (not recovering or pressure and self.profile!='survivor' and nd>28 and hp>.28) and (active==i) and abs(delta(s[0],me['aim'][0]))<.65 and abs(s[1]-me['aim'][1])<.55)
                     elif s[2] and same and s[3] and (not recovering or target.get('kind')=='mech' and pressure or drone_defense):
                         result['fire'][i]=bool(k!='lightning' or energy>=st.get('energy',3)+policy['reserve']+(8 if self.profile=='adaptive' and (recovering or emergency_zone) and target.get('hp',1000)>st.get('damage',0) else 0))
+                        if k == 'lightning' and not result['fire'][i] and w['cooldown'] == 0 and energy >= st['energy'] and target.get('charging') and not emergency_zone:
+                            # Spend the reserve to short a visible laser aimed at us.
+                            # A closer object could take the arc instead.
+                            target_distance = distance(p, target['pos'])
+                            if abs(delta(bearing(target['pos'], p), target['aim'][0])) < .25 and not any(
+                                obj['id'] != target['id'] and distance(p, obj['pos']) <= target_distance
+                                for obj in enemies + npcs + obs['crates']
+                            ):
+                                result['fire'][i] = True
             else:aim=[bearing(p,target['pos']),0.]
         if recovering and not pressure and not drone_defense:result['fire']=[False,False]
         if emergency_zone:
