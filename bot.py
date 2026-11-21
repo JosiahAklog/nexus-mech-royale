@@ -433,12 +433,20 @@ class Bot:
             wait=max(turn,w.get('cooldown',0.),w.get('reload',0.)); cycle=max(.1,st['cooldown']); accuracy=1.
             if k=='gun':
                 accuracy=clip(1.-d/320,.25,.95)
-                if w.get('ammo',0)<=0:wait=max(wait,st['reload'])
+                # With an empty chamber, an active reload already contributes
+                # its remaining time to wait. Only a fresh reload costs
+                # the full duration.
+                if w.get('ammo',0)<=0 and w.get('reload',0)<=0:
+                    wait=max(wait,st['reload'])
             elif k=='laser':wait+=max(0.,st['charge']-w.get('charge',0.));cycle+=st['charge'];accuracy=.83
             elif k=='mortar':accuracy=.45 if d<90 else .25
             if wait>=1.8:continue
             shots=1+int((1.8-wait)/cycle)
-            if k=='gun':shots=min(shots,w.get('ammo',0) if w.get('reload',0)<=0 else st['mag'])
+            if k=='gun':
+                rounds = w.get('ammo',0)
+                if w.get('reload',0)>0 or rounds==0:
+                    rounds = st['mag']
+                shots=min(shots,rounds)
             if k=='lightning':shots=min(shots,max(0,int((me['energy']-7)/max(.1,st['energy']))))
             damage=st['damage']*shots*accuracy
             if k=='laser' and 'mortar' in target.get('weapons',[]):damage*=1+st.get('cookoff',0.)
