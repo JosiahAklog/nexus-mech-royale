@@ -77,6 +77,45 @@ class Tests(unittest.TestCase):
     def test_no_laser_charge_outside_zone(self):
         o=scenario();o['self']['in_zone']=False;o['self']['weapons'][1]=weapon('laser');o['self']['weapons'][1]['charge']=.4;o['mechs']=[enemy(o)]
         self.assertFalse(self.validate(o)['fire'][1])
+    def test_final_zone_braking(self):
+        o=scenario(); p=o['self']['pos']; o['zone'].update(center=[p[0]+2,p[1]],next_center=[p[0]+2,p[1]],radius=5.,next_radius=0.,shrink_start=20.,shrink_end=35.); o['self']['vel']=[6.,0.,0.]
+        o['self']['energy']=100.; a=self.validate(o);self.assertFalse(a['boost']);self.assertGreater(a['move'][0],0.);self.assertLess(a['move'][0],.5)
+        o['self']['pos'][0]+=2;o['self']['vel']=[0.,0.,0.];o['t']+=.1;o['tick']+=2;a=self.validate(o);self.assertLess(math.hypot(*a['move']),.01)
+    def test_finish_supply_capture(self):
+        o=scenario(); q=self.b.map.point(self.b.map.nearest(o['self']['pos']));o['self']['pos']=[*q,self.b.map.ground(*q)];o['self']['hp']=1000
+        p=o['self']['pos'];o['drops']=[{'id':20000,'pos':p[:],'radius':8,'lands_in':0,'capture_s':4,'progress':3.6,'holder':o['self']['id']}];o['mechs']=[enemy(o,2,25,0)]
+        self.assertLess(math.hypot(*self.validate(o)['move']),.01)
+    def test_loot_memory(self):
+        o=scenario(); p=o['self']['pos']; o['pickups']=[{'id':8001,'kind':'laser','pos':[p[0]+40,p[1],p[2]]}];o['cubes']=[{'id':5001,'pos':[p[0]+25,p[1],p[2]]}]
+        a,b=self.b.remembered_loot(o);self.assertEqual(len(a),1);self.assertEqual(len(b),1)
+        o['pickups']=[];o['cubes']=[];o['t']+=1;a,b=self.b.remembered_loot(o);self.assertEqual(len(a),1);self.assertEqual(len(b),1)
+        o['self']['pos'][0]+=25;a,b=self.b.remembered_loot(o);self.assertEqual(len(b),0)
+        o['t']+=46;a,b=self.b.remembered_loot(o);self.assertEqual(len(a),0)
+    def test_pick_nearest(self):
+        o=scenario();p=o['self']['pos'];o['pickups']=[{'id':8000,'kind':'laser','pos':[p[0]+3,p[1],p[2]]},{'id':8001,'kind':'laser','pos':[p[0]+1,p[1],p[2]]}]
+        self.assertEqual(self.validate(o)['take'],8001)
+    def test_no_blind_gun_target(self):
+        o=scenario();me=o['self'];p=me['pos'];me['weapons']=[weapon('gun'),None];e=enemy(o,2,20,0);self.b.map.ray=lambda a,b:False
+        self.assertIsNone(self.b.choose_target(p,me,o,[e],[],None)[0])
+    def test_reload_not_while_firing(self):
+        o=scenario();me=o['self'];me['hp']=500;me['weapons']=[weapon('gun'),None];me['weapons'][0]['ammo']=4;o['mechs']=[enemy(o,2,20,0)];self.b.map.ray=lambda a,b:True
+        self.b.intercept=lambda *args:(0.,0.,True,True,20.,.1,.1)
+        a=self.validate(o);self.assertTrue(a['fire'][0]);self.assertFalse(a.get('reload',False))
+    def test_return_fire_when_recovery_blocked(self):
+        o=scenario();me=o['self'];me['hp']=500;me['weapons']=[weapon('gun'),None];o['mechs']=[enemy(o,2,65,0)];o['events']=[{'type':'damaged','weapon':'gun','by':2,'amount':45,'bearing':0.}]
+        self.b.map.ray=lambda a,b:True
+        self.b.intercept=lambda *args:(0.,0.,True,True,65.,.1,.1)
+        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertTrue(a['fire'][0]);self.assertLess(a['move'][0],0.)
+        o['t']+=3.;o['tick']+=60;o['events']=[];self.b.map.ray=lambda a,b:False
+        a=self.validate(o);self.assertFalse(any(a['fire']))
+    def test_lightning_and_gun_compatible_aim(self):
+        o=scenario();me=o['self'];me['hp']=me['max_hp'];me['energy']=100;me['weapons']=[weapon('gun'),weapon('lightning')];o['mechs']=[enemy(o,2,35,0)];self.b.map.ray=lambda a,b:True
+        self.b.intercept=lambda p,m,t,w:(.12,.16,True,True,35.,.03,.04) if w['kind']=='gun' else (0.,-.05,True,True,35.,.03,.04)
+        a=self.validate(o);self.assertEqual(a['fire'],[True,True]);self.assertAlmostEqual(a['aim'][0],.12)
+    def test_safe_cube_during_recovery(self):
+        o=scenario();me=o['self'];me['hp']=400;me['cubes']=1;q=self.b.map.point(self.b.map.nearest(me['pos']));me['pos']=[*q,self.b.map.ground(*q)];me['in_zone']=True
+        p=me['pos'];self.b.map.surface=lambda x,y:(p[2],p[2],20.);self.b.map.top=lambda x,y:p[2];o['cubes']=[{'id':5001,'pos':[p[0]+9,p[1],p[2]]}]
+        a=self.validate(o);self.assertTrue(self.b.recovering);self.assertGreater(a['move'][0],.4);self.assertFalse(any(a['fire']))
     def test_stress(self):
         rng=random.Random(44); samples=[]
         for i in range(360):

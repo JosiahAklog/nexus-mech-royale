@@ -19,6 +19,7 @@ class Map:
         m=json.loads((root/'mapinfo.json').read_text()); self.x=m['x'];self.y=m['y'];self.nx=m['nx'];self.ny=m['ny'];self.step=m['step']; self.bounds=m['bounds']; self.n=self.nx*self.ny
         self.data=array.array('h'); self.data.frombytes((root/'map.bin').read_bytes())
         if sys.byteorder!='little': self.data.byteswap()
+        if len(self.data)!=3*self.n: raise ValueError('Invalid map cache length')
         self.gs=4; self.w=(self.nx-1)//self.gs+1; self.h=(self.ny-1)//self.gs+1; self.cell=self.gs*self.step
         self.nav=[]; self.clear=[]; self.inv_step=1.0/self.step
         for j in range(self.h):
@@ -157,7 +158,7 @@ class Map:
         return out[::-1]
 
 class Bot:
-    name='NEXUS-v5'
+    name='NEXUS-v9'
     def __init__(self,hello):
         self.cfg=hello['config']; self.map=Map(); self.slot=hello['slot']; self.last_damage=-100.; self.last_bearing=None; self.last_attack=-100.; self.last_pos=None; self.stuck=0.; self.path=[]; self.route_goal=None; self.route_time=-100.; self.target_id=None; self.last_t=-1.; self.goal_memory=None; self.loot_seen={}; self.last_move=(0.,0.); self.history={}; self.altitude_goal=None; self.boosting=False; self.recovering=False; self.recovery_since=-100.; self.jet_until=-100.; self.last_target=None; self.sight_scan=0.; self.last_hp=None
     def target_height(self,t):
@@ -192,23 +193,43 @@ class Bot:
         yerr=abs(delta(yaw,me['aim'][0])); perr=abs(pitch-me['aim'][1]); rate=ts['turn_rate']*.045; prate=ts['pitch_rate']*.045
         aligned=(yerr<=tol+rate and perr<=ptol+prate) if k!='lightning' else yerr<math.radians(st['cone_deg']*.42)+rate
         return yaw,pitch,good,aligned,dist,tol,ptol
+    def remembered_loot(self,obs):
+        # Pickups and cubes vanish from observations as the torso turns. Retain
+        # short-lived sightings, and retire them once we reach their location.
+        p=obs['self']['pos']; t=obs['t']; live={}
+        for key in ('pickups','cubes'):
+            for obj in obs[key]:live[obj['id']]=obj;self.loot_seen[obj['id']]=(t,obj)
+        for ident,(seen,obj) in list(self.loot_seen.items()):
+            if ident in live:continue
+            d=distance(p,obj['pos']); dz=abs(p[2]-obj['pos'][2]); iscube=ident<8000
+            gone=t-seen>(18 if iscube else 45) or (d<7 and dz<5)
+            # A successful take/failed take due to a gone object is definitive.
+            gone=gone or any(e.get('id')==ident and (e['type']=='took' or e['type']=='take_failed' and e.get('reason')=='gone') for e in obs['events'])
+            if gone:del self.loot_seen[ident]
+        return [obj for _,obj in self.loot_seen.values() if obj['id']>=8000],[obj for _,obj in self.loot_seen.values() if obj['id']<8000]
     def choose_target(self,p,me,obs,enemies,npcs,loot):
         eye=(p[0],p[1],p[2]+me['stats']['muzzle_height']); cand=[]; nearby_enemy=any(distance(p,e['pos'])<40 for e in enemies)
         for t in enemies+npcs+obs.get('crates',[]):
             d=distance(p,t['pos']); kind=t.get('kind','crate'); hp=t.get('hp',1000); h=self.target_height(t)
             if d>220:continue
             line=self.map.ray(eye,(t['pos'][0],t['pos'][1],t['pos'][2]+h))
-            if not line and (kind!='mech' or d>75):continue
+            if not line and (kind!='mech' or d>110 or not any(w and w['kind']=='mortar' for w in me['weapons'])):continue
             if kind=='mech': score=108-d*.65+(1-hp/max(1,t.get('max_hp',1400)))*58-(0 if line else 105)-min(16,t.get('cubes',0)*1.6)
             elif kind=='npc': score=78-d*.85+(1-hp/max(1,t.get('max_hp',350)))*27
             else:score=74-d*.80+(1-hp/300)*23
             if t['id']==self.target_id:score+=8
             if kind=='mech' and line and d<70:score+=12
+            if kind=='mech' and hp>me['hp']*.9 and d>35 and me['cubes']<6:score-=35
             if kind=='mech' and line and t.get('charging'):score+=10 if d<45 and any(w and w['kind']=='lightning' for w in me['weapons']) else 0
             if kind!='mech' and loot:score-=15
             if kind!='mech' and me['hp']<me['max_hp']*.6:score-=65
-            if kind!='mech' and me['cubes']<6 and d<45:score+=20
+            if kind!='mech' and me['cubes']<10 and d<75:score+=38 if kind=='crate' else 22
             if kind!='mech' and nearby_enemy:score-=75
+            if kind=='crate' and me['cubes']<10 and not nearby_enemy:score+=28
+            if kind=='mech' and hp<220 and line:score+=35
+            if kind=='mech' and not line:score-=45
+            # Reduce aim cycling toward targets beyond the usable weapon envelope.
+            if kind=='mech' and not any(w and d<=w['stats'].get('range',w['stats'].get('speed',72)**2/max(1,w['stats'].get('gravity',22)))*.98 for w in me['weapons']):continue
             if kind=='mech' and me['hp']<me['max_hp']*.36:score-=25
             cand.append((score,t,line))
         if not cand:return None,False
@@ -226,16 +247,18 @@ class Bot:
         self.last_hp=me['hp']
         enemies=sorted((e for e in obs['mechs'] if e['kind']=='mech'),key=lambda e:distance(p,e['pos'])); npcs=[e for e in obs['mechs'] if e['kind']=='npc']; close=[e for e in enemies if distance(p,e['pos'])<125]; near=close[0] if close else None; nd=distance(p,near['pos']) if near else 999.; danger=len([e for e in close if distance(p,e['pos'])<85]); recovering=hp<.56 and (danger>=1 or t-self.last_damage<5) and (nd>18 or danger>=2); recovering=recovering or (hp<.32 and danger>=1)
         # Hysteresis: after disengaging, stay out of combat until repair has actually worked.
-        if hp<.59 and (danger>=1 or t-self.last_damage<6) or hp<.42:
+        if hp<.65 and (danger>=1 or t-self.last_damage<6) or hp<.50:
             if not self.recovering:self.recovery_since=t
             self.recovering=True
-        if hp>.90 or (z['radius']<30 and hp>.35):self.recovering=False
+        if hp>.91 or (z['radius']<30 and hp>.35):self.recovering=False
         recovering=self.recovering and z['radius']>14
-        threatened_now=nd<30 or t-self.last_damage<1.4
         zone_margin=z['radius']-distance(p,z['center']); emergency_zone=zone_margin<12 or not me['in_zone']
         # Distinguish a dangerous visible/remembered mech from one behind a building.
         eye=(p[0],p[1],p[2]+stats['eye_height'])
         exposed=[e for e in close if self.map.ray(eye,(e['pos'][0],e['pos'][1],e['pos'][2]+self.target_height(e)))]
+        # Return fire while fleeing under active pressure until actual cover is available.
+        pressure=bool(exposed) and (nd<35 or t-self.last_damage<max(1.4,min(2.5,stats['regen_delay']*.4)))
+        threatened_now=pressure or nd<30
         result={'tick':obs['tick'],'fire':[False,False]}
         if obs.get('offer'):
             ranks={'nanites':100,'armor':94,'plating':88,'servos':86,'gun_mag':82,'laser_damage':83,'mortar_reload':79,'gun_damage':78,'gun_rate':75,'laser_charge':77,'reactor':74,'jets':70,'capacitor':66,'lightning_efficiency':65,'lightning_range':69,'gyros':48,'gun_velocity':50,'mortar_velocity':46,'mortar_splash':59,'sensors':35,'laser_pierce':25,'lightning_chain':30}
@@ -244,18 +267,26 @@ class Bot:
         pref={'gun':0,'lightning':3,'mortar':2,'laser':4}
         if PROFILE=='mortar':pref['mortar']=5
         loot=[]
-        for x in obs['pickups']:
+        remembered_pickups,remembered_cubes=self.remembered_loot(obs)
+        visible_pickups={x['id'] for x in obs['pickups']}
+        for x in sorted(remembered_pickups,key=lambda x:(distance(p,x['pos']),x['id'])):
             k=x['kind']; d=distance(p,x['pos']); dz=abs(p[2]-x['pos'][2]); old=kinds[1]; want=k not in kinds and k!='gun' and (old is None or pref.get(k,0)>pref.get(old,0)) and not (old=='laser' and weapons[1].get('charge',0)>0)
-            if want and d<=self.cfg['loot']['pickup_radius'] and dz<=4:
+            if want and x['id'] in visible_pickups and d<=self.cfg['loot']['pickup_radius'] and dz<=4:
                 result['take']=x['id'];
                 if old is not None:result['drop']=1
                 break
-            if want and d<100 and dz<27 and self.safe(x['pos'],z):loot.append((d+dz*2-(18 if old is None else 0),x))
-        for x in obs['cubes']:
+            if want and d<140 and dz<27 and self.safe(x['pos'],z):loot.append((d+dz*2-(18 if old is None else 0),x))
+        for x in remembered_cubes:
             d=distance(p,x['pos']);dz=abs(p[2]-x['pos'][2]);
-            if d<120 and dz<26 and self.safe(x['pos'],z):loot.append((d+dz*2-40,x))
+            if d<155 and dz<26 and self.safe(x['pos'],z):
+                cap=self.cfg['cubes']['stat_cap']; thresholds=self.cfg['cubes']['upgrade_thresholds']; next_upgrade=min((n for n in thresholds if n>me['cubes']),default=100000)
+                extra=0 if me['cubes']<cap else 12 if next_upgrade-me['cubes']<=2 else 35
+                loot.append((d+dz*2-65+extra,x))
         loot.sort(key=lambda q:q[0]); lootgoal=loot[0][1] if loot else None
         target, line=self.choose_target(p,me,obs,enemies,npcs,lootgoal); self.target_id=target['id'] if target else None
+        if recovering and pressure and (target is None or target.get('kind')!='mech'):
+            target,line=self.choose_target(p,me,obs,exposed,[],None)
+            if target and target.get('kind')!='mech':target,line=None,False
         if recovering and (not threatened_now or target is None or target.get('kind')!='mech'):
             target=None;line=False
         # Avoid wasting a shot on a target tracked through solid cover.
@@ -274,21 +305,25 @@ class Bot:
                     elif k=='mortar':val=64 if ready else 3
                     elif k=='lightning':val=48 if ready and energy>=w['stats'].get('energy',3)+12 else 1
                     return val
-                active=max(good,key=priority); aim=list(solutions[active][:2]);
+                active=max(good,key=priority)
+                if weapons[active]['kind']=='lightning':
+                    for gi in good:
+                        if weapons[gi]['kind']=='gun' and priority(gi)>=30 and abs(delta(solutions[gi][0],solutions[active][0]))<math.radians(weapons[active]['stats']['cone_deg']*.36):active=gi;break
+                aim=list(solutions[active][:2])
                 for i,s in solutions.items():
-                    w=weapons[i]; k=w['kind']; st=w['stats']; charge=w.get('charge',0); same=abs(delta(s[0],aim[0]))<s[5]+.018 and abs(s[1]-aim[1])<s[6]+.018
+                    w=weapons[i]; k=w['kind']; st=w['stats']; charge=w.get('charge',0); same=(abs(delta(s[0],aim[0]))<=math.radians(st['cone_deg']*.42) if k=='lightning' else abs(delta(s[0],aim[0]))<s[5]+.018 and abs(s[1]-aim[1])<s[6]+.018)
                     if k=='laser':
                         if charge>0:
                             result['fire'][i]=bool(not recovering and s[2] and (charge<st['charge']-.06 or not (s[3] and same)) and charge<st['charge']+.6 and not (recovering and danger>=2))
-                        else:result['fire'][i]=bool(s[2] and same and w['cooldown']<=.08 and not recovering)
-                    elif s[2] and same and s[3] and (not recovering or target.get('kind')=='mech' and nd<38):
+                        else:result['fire'][i]=bool(s[2] and same and w['cooldown']<=.08 and not recovering and (active==i) and abs(delta(s[0],me['aim'][0]))<.65)
+                    elif s[2] and same and s[3] and (not recovering or target.get('kind')=='mech' and pressure):
                         result['fire'][i]=bool(k!='lightning' or energy>=st.get('energy',3)+10)
             else:aim=[bearing(p,target['pos']),0.]
-        if recovering and (nd>32 or not exposed):result['fire']=[False,False]
+        if recovering and not pressure:result['fire']=[False,False]
         if emergency_zone:
             for i,w in enumerate(weapons):
                 if w and w['kind']=='laser':result['fire'][i]=False
-        if weapons[0] and weapons[0]['kind']=='gun' and weapons[0].get('ammo',12)<weapons[0]['stats']['mag']*.72 and (not target or recovering or not line):result['reload']=True
+        if weapons[0] and weapons[0]['kind']=='gun' and not result['fire'][0] and weapons[0].get('reload',0)<=0 and weapons[0].get('ammo',12)<weapons[0]['stats']['mag']*.72 and (not target or recovering or not line):result['reload']=True
         # Goal selection. Stay in a healthy part of the zone without blindly rushing its center.
         curd=distance(p,z['center']); nextd=distance(p,z['next_center']); next_r=z['next_radius']; current_margin=z['radius']-curd; next_margin=next_r-nextd
         travel_time=max(0.,nextd-max(0,next_r-18))/max(1.,stats['walk_speed']*.72)
@@ -298,21 +333,25 @@ class Bot:
         drops=[]
         for d in obs['drops']:
             dd=distance(p,d['pos']); threatened=any(distance(e['pos'],d['pos'])<32 for e in close)
-            if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and not threatened and dd<180:
-                drops.append((dd-(1-hp)*100,d))
-        if drops and (hp<.93 or me['cubes']<12) and not urgency:
-            d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<7
+            finishing=(d.get('holder')==me['id'] and d.get('lands_in',0)<=0 and dd<d['radius']*.85 and d.get('progress',0)>=max(0,d.get('capture_s',4)-.9) and hp>.25 and not any(distance(e['pos'],d['pos'])<d['radius']+3 for e in close))
+            if d.get('lands_in',0)<=max(0,dd/stats['walk_speed'])+3 and self.safe(d['pos'],z,4) and (not threatened or finishing) and dd<240:
+                drops.append((dd-(1-hp)*100-(180 if finishing else 0),d))
+        if drops and (hp<.98 or me['cubes']<15) and not urgency:
+            d=min(drops,key=lambda q:q[0])[1];goal=d['pos'];mode='drop';altitude=goal[2];hold=distance(p,goal)<d['radius']*.58 and abs(p[2]-goal[2])<7
         if goal is None and urgency:
             ux,uy=norm(p[0]-z['next_center'][0],p[1]-z['next_center'][1]); r=max(0,next_r-min(42,max(12,next_r*.35)));goal=(z['next_center'][0]+ux*r,z['next_center'][1]+uy*r);mode='zone'
         if goal is None and recovering:
             # If hidden and safe, stop spending energy and let HP restore rather than wandering into combat.
-            if not exposed and nd>36 and t-self.last_damage>1.1 and current_margin>32:
-                goal=p;mode='repair';hold=True
+            if not exposed and nd>30 and t-self.last_damage>1.1 and current_margin>25:
+                nearby_cubes=[c for c in remembered_cubes if distance(p,c['pos'])<13 and abs(p[2]-c['pos'][2])<3 and self.safe(c['pos'],z,12)]
+                if nearby_cubes and me['cubes']<self.cfg['cubes']['stat_cap']:
+                    goal=min(nearby_cubes,key=lambda c:distance(p,c['pos']))['pos'];mode='loot';altitude=goal[2]
+                else:goal=p;mode='repair';hold=True
             elif near:ex,ey=norm(p[0]-near['pos'][0],p[1]-near['pos'][1])
             elif self.last_bearing is not None:ex,ey=-cos(self.last_bearing),-sin(self.last_bearing)
             else:ex,ey=norm(z['next_center'][0]-p[0],z['next_center'][1]-p[1])
             if goal is None:goal=(p[0]+ex*70,p[1]+ey*70);mode='escape'
-        if goal is None and lootgoal and (nd>35 or lootgoal['id']>=5000 and lootgoal['id']<8000):
+        if goal is None and lootgoal and (nd>25 or lootgoal['id']>=5000 and lootgoal['id']<8000) and (not exposed or distance(p,lootgoal['pos'])<25):
             goal=lootgoal['pos'];mode='loot';altitude=goal[2]
         if goal is None and target:
             d=distance(p,target['pos']);kind=target.get('kind','crate')
@@ -328,20 +367,29 @@ class Bot:
                 ideal=16 if kind=='npc' else 13; ex,ey=norm(target['pos'][0]-p[0],target['pos'][1]-p[1]);goal=(target['pos'][0]-ex*ideal,target['pos'][1]-ey*ideal);mode='farm';hold=d<ideal+3 and line and nd>75;altitude=target['pos'][2]
         if goal is None:
             if self.goal_memory is None or distance(p,self.goal_memory)<15 or not self.safe(self.goal_memory,z,18):
-                angle=.8+self.slot*2.399+int(t/14)*1.7; r=min(max(0,next_r*.55),95); self.goal_memory=(z['next_center'][0]+cos(angle)*r,z['next_center'][1]+sin(angle)*r)
+                angle=.8+self.slot*2.399+int(t/14)*1.7; r=min(max(0,next_r*.78),220); self.goal_memory=(z['next_center'][0]+cos(angle)*r,z['next_center'][1]+sin(angle)*r)
             goal=self.goal_memory;mode='patrol'
         # Boundary correction on any non-zone goal.
         gx,gy=goal[:2]; center=z['center']; ux,uy=norm(gx-center[0],gy-center[1]); gd=distance(goal,center); rr=max(0,z['radius']-12)
         if gd>rr:gx=center[0]+ux*rr;gy=center[1]+uy*rr
         b=self.map.bounds;gx=clip(gx,b['minX']+8,b['maxX']-8);gy=clip(gy,b['minY']+8,b['maxY']-8);goal=(gx,gy)
-        if mode=='zone' and distance(p,goal)<(0.7 if z['radius']<6 else 2.0):hold=True
+        if mode=='zone' and distance(p,goal)<(.2 if z['radius']<6 else 2.0):hold=True
+        if z['radius']<18 and (distance(p,z['center'])>max(.3,z['radius']-3) or z['next_radius']<3):
+            gx,gy=z['center'];goal=(gx,gy);mode='zone';hold=distance(p,goal)<.18 and hypot(*me['vel'][:2])<.35
         # Ground route when needed; local steering handles combat, roofs, and moving threats.
         direct=norm(gx-p[0],gy-p[1]); route_needed=mode in ('zone','loot','drop','patrol','farm','escape') and not hold and distance(p,goal)>13 and (altitude is None or altitude<p[2]+5)
         if route_needed and self.map.ray((p[0],p[1],p[2]+1.1),(gx,gy,self.map.ground(gx,gy)+1.1)) and distance(p,goal)<75:route_needed=False
         if route_needed:
             if self.route_goal is None or distance(goal,self.route_goal)>20 or t-self.route_time>2.0 or not self.path or self.stuck>.6 and t-self.route_time>.5:
                 self.route_goal=goal;self.route_time=t;self.path=self.map.route(p,goal)
-            while self.path and distance(p,self.path[0])<9:self.path.pop(0)
+            # Don't discard a waypoint around a corner just because it is
+            # nearby. Skip ahead only when the next segment is unobstructed.
+            while self.path and distance(p,self.path[0])<3.5:self.path.pop(0)
+            if len(self.path)>1:
+                for i in range(min(3,len(self.path)-1),0,-1):
+                    q=self.path[i]
+                    if distance(p,q)<30 and self.map.ray((p[0],p[1],p[2]+.65),(q[0],q[1],self.map.ground(*q)+.65)) and self.map.clearance(*q)>=stats['radius']+.5:
+                        del self.path[:i];break
             if self.path:direct=norm(self.path[0][0]-p[0],self.path[0][1]-p[1])
         else:self.path=[];self.route_goal=None
         # Pick local steering direction. Estimate impact danger from incoming projectiles.
@@ -357,6 +405,9 @@ class Bot:
         for (dx,dy),risk in zip(candidates,risks):
             score=0 if hold else 14*(dx*direct[0]+dy*direct[1]); score+=2*(dx*self.last_move[0]+dy*self.last_move[1]);
             if hold:score-=hypot(dx,dy)*(20 if mode=='repair' else 12)
+            if mode=='fight' and near and near.get('charging'):
+                ang=bearing(near['pos'],p); eyaw=near.get('aim',[0,0])[0]
+                if abs(delta(ang,eyaw))<.35:score+=8*abs(dx*sin(eyaw)-dy*cos(eyaw))
             # terrain/wall checks at multiple distances; allow moving along roof edges.
             for dd,pen in (((3,65),(7,34),(13,15)) if hypot(dx,dy)>.01 else ()):
                 xx=p[0]+dx*dd;yy=p[1]+dy*dd; top,ground,clearance=self.map.surface(xx,yy)
@@ -364,18 +415,25 @@ class Bot:
                 elif clearance<stats['radius']+1 and p[2]<ground+3:score-=pen*.35
             xx=p[0]+dx*12; yy=p[1]+dy*12; future=(xx,yy,p[2]); zm=z['radius']-distance(future,z['center']);
             if zm<12:score-=max(0,12-zm)*(2.5 if urgency else 1.6)
+            if t>=z['shrink_start'] and next_margin<25 and not hold:
+                future_margin=next_r-distance(future,z['next_center']);score-=max(0,8-future_margin)*.24
             if near:
                 for e in close[:5]:
                     old=distance(p,e['pos']); new=distance(future,e['pos']);
-                    if recovering and not hold:score+=(new-old)*(.95 if old<70 else .28)
+                    if recovering and not hold:score+=(new-old)*(1.6 if old<70 else .55)
                     elif old<20:score+=(new-old)*.85
-                    if recovering and not hold and old<100 and not self.map.ray((xx,yy,p[2]+stats['eye_height']),(e['pos'][0],e['pos'][1],e['pos'][2]+self.target_height(e))):score+=6
-            score-=risk
+                    if recovering and not hold and old<100 and not self.map.ray((xx,yy,p[2]+stats['eye_height']),(e['pos'][0],e['pos'][1],e['pos'][2]+self.target_height(e))):score+=13
+            score-=risk*1.35
             if score>bestscore:bestscore=score;best=(dx,dy)
         move=best or direct; jump=False;boost=False
         if mode in ('zone','loot','drop') and not hold and distance(p,goal)<8 and self.stuck<.5:
-            # Slow down approaching a pickup/capture point rather than overshooting.
-            factor=clip(distance(p,goal)/7,.08,1.);move=(move[0]*factor,move[1]*factor)
+            # Slow near a target. In the final tiny circle, directly control the
+            # desired velocity to settle at the center instead of orbiting it.
+            if mode=='zone' and z['radius']<18:
+                speed=max(1.,stats['walk_speed']); vx=(gx-p[0])*2.2-me['vel'][0]*.25; vy=(gy-p[1])*2.2-me['vel'][1]*.25
+                mag=max(speed,hypot(vx,vy)); move=(vx/mag,vy/mag)
+            else:
+                factor=clip(distance(p,goal)/7,.08,1.);move=(move[0]*factor,move[1]*factor)
         if self.stuck>.55 and not hold and energy>30:
             self.jet_until=t+1.8
             # Vertical escape if the selected route is obstructed and walking has failed.
@@ -387,7 +445,7 @@ class Bot:
             jump=me['grounded'];boost=not me['grounded']
         if not me['grounded'] and stats['height']>0 and energy>19 and self.map.top(p[0]+move[0]*9,p[1]+move[1]*9)>p[2]+1.5:boost=True
         if me['grounded'] and not hold and hypot(*move)>.25 and self.map.top(p[0]+move[0]*4,p[1]+move[1]*4)<p[2]+stats['step_up']+.55:
-            if mode in ('escape','zone') and (energy>48 or self.boosting and energy>22):boost=True
+            if mode in ('escape','zone') and distance(p,goal)>12 and (energy>32 or self.boosting and energy>12):boost=True
             elif mode=='loot' and distance(p,goal)>20 and energy>78:boost=True
             elif mode=='fight' and danger and nd<27 and energy>52:boost=True
             elif mode=='patrol' and energy>90 and distance(p,goal)>70:boost=True
@@ -395,12 +453,12 @@ class Bot:
         if not target:
             if recovering and exposed:aim=[bearing(p,exposed[0]['pos']),0.]
             elif recovering and self.last_bearing is not None and t-self.last_damage<6:aim=[self.last_bearing,0.]
-            elif near:aim=[bearing(p,near['pos']),0.]
             elif t-self.last_damage<3 and self.last_bearing is not None:aim=[self.last_bearing,0.]
+            elif near:aim=[bearing(p,near['pos']),0.]
             elif not recovering and any(s.get('dist')=='near' and s.get('kind') in ('gun','laser_charge','lightning','mortar','boost') for s in obs.get('sounds',[])):
                 sound=min((s for s in obs['sounds'] if s.get('dist')=='near' and s.get('kind') in ('gun','laser_charge','lightning','mortar','boost')),key=lambda s:s.get('age',0)); aim=[sound['bearing'],0.]
             else:
-                yaw=atan2(move[1],move[0]) if hypot(*move)>.1 else me['aim'][0];aim=[yaw+.55*sin(t*1.1+self.slot),-.05]
+                yaw=atan2(move[1],move[0]) if hypot(*move)>.1 else me['aim'][0];aim=[yaw+(1.08 if mode=='patrol' and not near else .55)*sin(t*.85+self.slot),-.05]
         if target and recovering and near and target.get('kind')!='mech':aim=[bearing(p,near['pos']),0.]
         result.update(move=list(move),boost=bool(boost),jump=bool(jump),aim=[float(delta(aim[0],0)),float(clip(aim[1],stats['min_pitch'],stats['max_pitch']))]);self.last_move=move
         return result

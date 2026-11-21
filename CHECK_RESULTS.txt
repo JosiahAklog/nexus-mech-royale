@@ -1,43 +1,11 @@
-NEXUS V5 — Local verification (not an official competition score)
-Python 3.13, one CPU affinity, on authoring host. No Docker available.
-
-bot: /usr/bin/python3 -u bot.py
-ready in 82 ms: name 'NEXUS-v5'
-observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.2  p90 0.3  p99 0.6  max 0.9  (this machine, not the 1-CPU match container)
-answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
-PASS
-bot: setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/python3 -u bot.py
-ready in 84 ms: name 'NEXUS-v5'
-observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.2  p90 0.3  p99 0.5  max 0.8  (this machine, not the 1-CPU match container)
-answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
-PASS
-bot: setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/python3 -u bot.py
-ready in 64 ms: name 'NEXUS-v5'
-observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.2  p90 0.4  p99 3.6  max 4.2  (this machine, not the 1-CPU match container)
-answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
-PASS
-bot: bash -c ulimit -v 524288; cd "$1"; exec setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/python3 -u bot.py _ /tmp/nexus5runtime.80HSIL
-ready in 81 ms: name 'NEXUS-v5'
-observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.2  p90 0.3  p99 1.0  max 3.7  (this machine, not the 1-CPU match container)
-answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
-PASS
-
-.............
-----------------------------------------------------------------------
-Ran 13 tests in 0.926s
-
-OK
-360 synthetic cases: max 0.70 ms, p99 0.66 ms
-32 projectiles x 17 steering choices, 2000 calls: native 0.0227 ms per call, Python 0.2304 ms per call, 10.1x speedup; same V5 risk model.
-
-V4 comparison under same CPU and UID:
-bot: setpriv --reuid=65534 --regid=65534 --clear-groups /usr/bin/python3 -u bot.py
-ready in 80 ms: name 'NEXUS-v4'
-observations: 300  answered in time: 300  missed the 50 ms budget: 0 (0 came late)
-answer time ms: p50 0.2  p90 0.3  p99 0.5  max 1.1  (this machine, not the 1-CPU match container)
-answers to older queued observations (dropped): 0  wrong tick: 0  bad lines: 0  debug drawings: 0 (0 over the caps)
-PASS
+NEXUS V9 verification — actual commands executed on clean V8 extraction
+Native unit suite: 22/22 passed, including 360 synthetic cases and direct replay actions.
+Python fallback unit suite: 20 passed, 2 native-only skipped; 360 synthetic cases.
+Native replay on default Python: 300/300, p50 0.3 ms, p99 0.6 ms, max 1.5 ms.
+Native replay on system Python 3.13: 300/300, p50 0.2 ms, p99 0.5 ms, max 1.0 ms.
+Restricted runtime replay (one CPU, 512 MiB address-space limit, uid/gid 65534, read-only bot directory, Python 3.13): 300/300, p50 0.2 ms, p99 0.5 ms, max 0.9 ms.
+Python fallback replay: 300/300, p50 0.3 ms, p99 2.2 ms, max 5.5 ms.
+All replay runs: zero missed deadlines, wrong ticks and bad lines.
+All Python files compile; C source compiles with -Wall -Wextra -Werror; rebuilt shared library and regenerated map cache/metadata byte-identical to packaged versions.
+Official wrapper, schema, protocol, map, replay and checker byte-identical to supplied kit.
+Docker executable unavailable; actual container validation and match placement remain unverified. No live simulator or private match seeds supplied. Prior V5 score 3.88 is the only measured competition score provided by the team.
