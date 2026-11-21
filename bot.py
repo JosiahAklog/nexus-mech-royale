@@ -930,7 +930,14 @@ class Bot:
             score-=(fast_risk if use_boost else risk)*policy['risk']
             if score>bestscore:bestscore=score;best=(dx,dy);best_boost=use_boost
         move=best or direct; jump=False;boost=False
-        if mode in ('zone','loot','drop') and not hold and distance(p,goal)<8 and self.stuck<.5 and not (self.variant=='movement' and projectiles and min(risks)>0. and z['radius']>=18):
+        # Preserve a full-speed dodge near loot when slowing would increase risk.
+        loot_dodge = False
+        if mode == 'loot' and projectiles and distance(p, goal) < 7 and not hold:
+            factor = clip(distance(p, goal) / 7, .08, 1.)
+            slower = (move[0] * factor, move[1] * factor)
+            slow_risk = self.map.projectile_risks([slower], projectiles, p, me, gravity, splash, stats['walk_speed'] * charge_mult)[0]
+            loot_dodge = risks[candidates.index(move)] + 1.0 < slow_risk
+        if mode in ('zone','loot','drop') and not loot_dodge and not hold and distance(p,goal)<8 and self.stuck<.5 and not (self.variant=='movement' and projectiles and min(risks)>0. and z['radius']>=18):
             # Slow near a target. In the final tiny circle, directly control the
             # desired velocity to settle at the center instead of orbiting it.
             if mode=='zone' and z['radius']<18:
