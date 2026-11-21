@@ -500,6 +500,17 @@ class Bot:
                 score+=12*self.duel_value(me,t,d)
                 score+=self.opportunity_bonus(p,me,t,enemies,obs)
                 if self.variant=='combat':score+=self.combat_opportunity(me,t,d)
+                # A ready, aligned gun can secure a placement before resuming the duel.
+                if self.variant == 'combat' and d < 65 and abs(delta(bearing(p,t['pos']),me['aim'][0])) < .22:
+                    for gun in me['weapons']:
+                        if not gun or gun['kind'] != 'gun' or gun.get('reload',0) or not gun.get('ammo',0):
+                            continue
+                        if gun['cooldown'] > .1 or d >= gun['stats']['range']:
+                            continue
+                        strength = 1 + self.cfg['cubes']['damage_per_cube'] * min(me['cubes'], self.cfg['cubes']['stat_cap'])
+                        if hp <= .8 * gun['stats']['damage'] * strength:
+                            score += 120
+                            break
             cand.append((score,t,line))
         self.target_candidates=sorted(cand,key=lambda it:it[0],reverse=True)
         if not self.target_candidates:return None,False
